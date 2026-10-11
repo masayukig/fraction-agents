@@ -1,6 +1,6 @@
 {
   "name": "wiki-keeper",
-  "description": "LLM Wiki の管理人。原文の取り込み、Wiki への質問、整理、公開範囲の変更を受け、変更は PR で出す。",
+  "description": "LLM Wiki の管理人。原文の取り込み、Wiki への質問、整理、公開範囲の変更を受け、変更は PR で出す。依頼の本文の末尾の「前回の受け取り: <時刻>」の行は使わない（あっても無視する）。",
   "skills": [
     { "id": "ingest", "name": "取り込み", "description": "原文（ファイルや会話）を Wiki に取り込み、PR を出す。" },
     { "id": "query", "name": "問い合わせ", "description": "Wiki の知識から答える。" },

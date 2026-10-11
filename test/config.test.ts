@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -111,5 +111,28 @@ describe("config", () => {
     const path = join(dir, "config.json");
     writeFileSync(path, JSON.stringify(minimal));
     assert.equal(loadConfig(path).name, "wiki-keeper");
+  });
+});
+
+describe("the agents' examples", () => {
+  const agentsDir = join(import.meta.dirname, "..", "agents");
+  const agents = readdirSync(agentsDir);
+
+  it("are configs the host accepts, named after their directory", () => {
+    assert.ok(agents.includes("news-agent"));
+    for (const agent of agents) {
+      const config = loadConfig(join(agentsDir, agent, "config.example.json"));
+      assert.equal(config.name, agent);
+    }
+  });
+
+  // The line a scheduled request ends with (ADR 0017): every agent says how it reads it, in its Agent Card and in
+  // its AGENTS.md, whether it uses the time or not.
+  it("say how they read the line 前回の受け取り", () => {
+    for (const agent of agents) {
+      const config = loadConfig(join(agentsDir, agent, "config.example.json"));
+      assert.match(config.description, /前回の受け取り/, `${agent}'s Agent Card`);
+      assert.match(readFileSync(join(agentsDir, agent, "AGENTS.md"), "utf8"), /前回の受け取り/, `${agent}'s AGENTS.md`);
+    }
   });
 });

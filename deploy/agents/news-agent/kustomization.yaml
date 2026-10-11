@@ -1,0 +1,37 @@
+# The news agent (ADR 0017) on its own image: the generic host with the page reader, and the collector beside it.
+# The environment's overlay refers to this directory as a remote base, pinned to a version, and sets the namespace,
+# the image's tag, the StorageClass and the ConfigMap news-agent-config (config.json and news.json, the sources).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - ../../../agents/news-agent
+labels:
+  - pairs:
+      app.kubernetes.io/instance: news-agent
+    includeSelectors: true
+images:
+  - name: ghcr.io/yuanying/fraction-agents
+    newName: ghcr.io/yuanying/fraction-agents-news-agent
+patches:
+  - target: {kind: StatefulSet, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: news-agent
+  - target: {kind: Service, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: news-agent
+  - target: {kind: ServiceAccount, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: news-agent
+  - target: {kind: ClusterRoleBinding, name: agent-auth-delegator}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: news-agent-auth-delegator
+  - path: statefulset.yaml

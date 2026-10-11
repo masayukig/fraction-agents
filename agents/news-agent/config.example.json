@@ -1,0 +1,20 @@
+{
+  "name": "news-agent",
+  "description": "ニュース係。決まった情報源（RSS・Atom）を 1 時間ごとに取り込んで貯めておき、依頼の本文に書かれた関心の方針に沿って、新着の記事から候補を選び、候補ごとに要約・選んだ理由・情報源・公開日・URL を返す（既定で最大 10 件。本文で変えられる）。関心の方針は依頼ごとに本文に書く（覚えておかない）。「新着」は記事を取り込んだ時刻で決める。依頼の本文の末尾に「前回の受け取り: 2026-10-11T07:00:00+09:00 (JST)」の形の行（ISO 8601・オフセットつき）があれば、その時刻より後に取り込んだ記事を新着とする。行が無ければ直近 24 時間。新着が無いとき、または選んだ候補が無いときは、返事の節（sections）を空にする。情報源の一覧は変えられない。",
+  "skills": [
+    { "id": "digest", "name": "新着から選ぶ", "description": "新着の記事から、依頼の関心の方針に沿って候補を選び、候補 1 件を 1 節（要約・選んだ理由・情報源・公開日）で返す。返事の要約に「新着 N 件中 M 件を選んだ」と主な話題を書く。", "examples": ["AI と開発ツールの新しい動き、日本の宇宙開発のニュースを中心に選んで。芸能とスポーツはいらない。5 件まで\n\n前回の受け取り: 2026-10-11T07:00:00+09:00 (JST)"] },
+    { "id": "sources", "name": "情報源の状態", "description": "情報源の一覧と、取り込みに失敗し続けている情報源を答える。", "examples": ["取り込めていない情報源はある？"] }
+  ],
+  "publicUrl": "https://agents.example.test/news-agent/",
+  "allowedCallers": [
+    "system:serviceaccount:fraction-agents:owner",
+    "system:serviceaccount:fraction-agents:claude",
+    "system:serviceaccount:fraction-agents:natsumi"
+  ],
+  "agentDir": "/agent",
+  "dataDir": "/data",
+  "piCommand": ["pi", "--exclude-tools", "web_search,attach_image"],
+  "contextWorkspace": {
+    "prepare": ["mkdir", "-p"]
+  }
+}

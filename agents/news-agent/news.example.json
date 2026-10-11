@@ -1,0 +1,9 @@
+{
+  "timeZone": "Asia/Tokyo",
+  "intervalMinutes": 60,
+  "storeDir": "/data/news",
+  "sources": [
+    { "name": "Example Tech News", "kind": "feed", "url": "https://tech.example/feed.xml" },
+    { "name": "Example Science Blog", "kind": "feed", "url": "https://science.example/atom.xml" }
+  ]
+}

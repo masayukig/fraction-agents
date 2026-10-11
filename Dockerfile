@@ -70,5 +70,17 @@ COPY --chown=node:node images/web-researcher/pi-agent-browser-native.json /home/
 WORKDIR /app
 USER node
 
+# The news agent (ADR 0017): the generic host with the Pi package that reads a page (fetch_content, the same reader as
+# the web researcher's). Its collector runs in the same image, beside the host (bin/news-collect.ts). Built with
+# --target news-agent; no browser.
+FROM host AS news-agent
+USER root
+# The version is pinned by the lock. Pi provides the package's peer dependencies (.npmrc: legacy-peer-deps).
+WORKDIR /opt/fraction-agents/news-agent
+COPY images/news-agent/package.json images/news-agent/package-lock.json images/news-agent/.npmrc ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+WORKDIR /app
+USER node
+
 # The generic host is the default target.
 FROM host

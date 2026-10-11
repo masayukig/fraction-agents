@@ -231,6 +231,7 @@ docker build -t fraction-agents-generic-host .
 ```
 
 調べもの係の image は、同じ Dockerfile の target `web-researcher` である（`docker build --target web-researcher .`）。汎用ホストの image に Chromium などを足したもので、汎用ホストの image は重くならない。
+ニュース係の image は target `news-agent` で、汎用ホストの image にページを読む Pi パッケージ（`@kvidzibo/pi-web-access`）だけを足したもの。ブラウザは入らない。
 
 ### 呼び出し方
 
@@ -254,6 +255,7 @@ npm run build
 
 テストは本物の pi も Kubernetes も使わない。RPC の JSONL を話す偽の pi（`test/fixtures/fake-pi.ts`）と、偽の TokenReview で動かす。
 Pi パッケージのテストは、ローカルの bare repository を GitHub の代わりにし、GitHub の API は偽物かローカルの HTTP サーバーで代える。
+ニュース係のフィードの取得も、偽の fetch かローカルの HTTP サーバーで代え、外へは通信しない。
 
 ## エージェントを呼ぶ（呼び出し元の準備）
 
@@ -360,6 +362,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | `web-research` | SearXNG で検索するツール `searxng_search`、読めなかったページを記録する `report_unreadable`、ほかの検索の道具の遮断、タスクごとの読めなかった数のログ（ADR 0013）。agentDir に `web-research.json` があるときだけ働く。詳しくは `agents/web-researcher/README.md` |
 | `calendar` | Google Calendar の予定を調べ、登録し、自分で登録した予定だけを変更・削除する道具（ADR 0014）。招待はしない。agentDir に `calendar.json` があるときだけ働く。詳しくは `agents/calendar-keeper/README.md` |
 | `gmail` | Gmail を読み取り専用で検索し、メールと、頼まれたときだけテキストの添付を読む道具（ADR 0016）。agentDir に `gmail.json` があるときだけ働く。本人の認可のコマンドは `bin/gmail-authorize.ts`。詳しくは `agents/gmail-agent/README.md` |
+| `news` | ニュース係の収集係が取り込んだ記事を、取り込んだ時刻で引く道具 `news_articles` と、情報源の状態を見る `news_sources`（ADR 0017）。agentDir に `news.json` があるときだけ働く。収集係のコマンドは `bin/news-collect.ts`。詳しくは `agents/news-agent/README.md` |
 
 ### 画像を添える
 
@@ -491,6 +494,30 @@ Chromium の入った別の image（`ghcr.io/yuanying/fraction-agents-web-resear
 メールは送らず、既読やラベルも変えない。依頼のあいだで何も覚えておかない。汎用ホストの image で動く。
 本人の Google Cloud での準備・認可・再認可と Secret の作り方、頼み方の例は `agents/gmail-agent/README.md`。
 
+## ニュース係
+
+`agents/news-agent/` に、ニュース係の agentDir の中身の雛形と、汎用ホストの設定の例を置く（ADR 0017）。
+Pod の中の収集係（別のコンテナ）が、`news.json` の情報源（RSS・Atom）を 1 時間ごとに取り込んで PVC に貯め、
+係は、依頼の本文に書かれた関心の方針に沿って新着の記事から候補を選んで返す。「新着」は記事を取り込んだ時刻で決め、
+依頼の末尾の「前回の受け取り」の行があればその時刻より後、無ければ直近 24 時間とする。
+ページを読む Pi パッケージを足した別の image（`ghcr.io/yuanying/fraction-agents-news-agent`）で動く。詳しくは `agents/news-agent/README.md`。
+
+## 「前回の受け取り」の行
+
+決まった時刻に自動で送られる依頼（なつみの郵便ポストの定期便）は、本文の末尾に
+`前回の受け取り: 2026-10-11T07:00:00+09:00 (JST)` の形の行を付ける（ADR 0017）。時刻は ISO 8601 で、オフセットが付く。
+前回うまく返事を受け取った時刻で、係はこれを「前回からの新着」の基準にする。前回どこまで返したかを係は覚えない。
+汎用ホストは A2A の message の metadata を pi に渡さないので、係が読むのは本文の行である。
+
+| 係 | 行の扱い |
+|---|---|
+| ニュース係 | その時刻より後に取り込んだ記事から選ぶ。行が無ければ直近 24 時間 |
+| Gmail 係 | 本文に期間が無ければ、その時刻より後に届いたメールを対象にする。行が無ければ直近 7 日 |
+| カレンダー係 | 期間は本文で決め、行は使わない。予定がいつ追加・変更されたかは見分けられない |
+| 調べもの係・Wiki 管理人 | 使わない。本文が「前回から後の」ものを頼んだときだけ基準にする |
+
+各係の Agent Card の説明と AGENTS.md にも、同じ扱いを書いてある。
+
 ## Kubernetes に置く
 
 manifest は kustomize で組む。このリポジトリには、どの環境でも使える base と、エージェントごとの kustomization を置く。
@@ -549,6 +576,15 @@ Pod の中のパス:
 - image は汎用ホストの `ghcr.io/yuanying/fraction-agents`。
 - Secret `calendar-keeper-google`（キー `service-account.json`）を `/var/run/secrets/google` にマウントする。サービスアカウントの鍵で、手で作る。
   Secret が無くても Pod は起動する。その間、カレンダーの道具は失敗する。
+
+ニュース係（`deploy/agents/news-agent`）も同じ形で、次が違う。
+
+- 名前は `news-agent`（PVC は `data-news-agent-0`）。ConfigMap は `news-agent-agent-dir`（`AGENTS.md`・`settings.json`）と
+  `news-agent-config`（`config.json`・`news.json`）。`news.json` は host の `/agent/news.json` と collector の `/etc/fraction-agents/news.json` に差し込む。
+- image は `ghcr.io/yuanying/fraction-agents-news-agent`。overlay はこの名前で tag を決める。
+- 収集係のコンテナ `collector` を足す。同じ image で `bin/news-collect.ts` を動かし、PVC の `data/` を `/data` にマウントして、
+  記事のストアを `/data/news` に置く。
+- Secret は無い。情報源は `news.json` で渡す。
 
 Gmail 係（`deploy/agents/gmail-agent`）も同じ形で、次が違う。
 
@@ -657,5 +693,6 @@ kubectl exec -it -n fraction-agents wiki-keeper-0 -- env PI_CODING_AGENT_DIR=/ag
 ### image
 
 tag `v<版>` を push すると、GitHub Actions が `ghcr.io/yuanying/fraction-agents:<版>`（`v` を除いた版）と、
-調べもの係の `ghcr.io/yuanying/fraction-agents-web-researcher:<版>`（Dockerfile の target `web-researcher`）を build して push する。
+調べもの係の `ghcr.io/yuanying/fraction-agents-web-researcher:<版>`（Dockerfile の target `web-researcher`）と、
+ニュース係の `ghcr.io/yuanying/fraction-agents-news-agent:<版>`（target `news-agent`）を build して push する。
 PR では build だけを確かめる。初めて push した package は private で作られるので、GitHub の画面で public にする。
