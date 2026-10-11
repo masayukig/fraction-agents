@@ -1,0 +1,12 @@
+{
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-6.1-sol",
+  "defaultThinkingLevel": "medium",
+  "defaultProjectTrust": "never",
+  "enableInstallTelemetry": false,
+  "defaultTools": [],
+  "packages": [
+    "/opt/fraction-agents/pi-package",
+    "/opt/fraction-agents/news-agent/node_modules/@kvidzibo/pi-web-access"
+  ]
+}

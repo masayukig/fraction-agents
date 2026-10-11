@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: host
+          volumeMounts:
+            - name: config
+              mountPath: /agent/news.json
+              subPath: news.json
+              readOnly: true
+        # The collector: takes in every source on its own timer, whether or not a request comes, into the store on
+        # the volume (/data/news) that the agent's tools read. It is the store's only writer. The host and pi never
+        # start or stop it: pi runs only while a context is in use.
+        - name: collector
+          image: ghcr.io/yuanying/fraction-agents
+          command: ["node", "/opt/fraction-agents/pi-package/bin/news-collect.ts", "--config", "/etc/fraction-agents/news.json"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              subPath: data
+            - name: config
+              mountPath: /etc/fraction-agents/news.json
+              subPath: news.json
+              readOnly: true
+      volumes:
+        - name: agent-dir
+          configMap:
+            name: news-agent-agent-dir
+        - name: config
+          configMap:
+            name: news-agent-config

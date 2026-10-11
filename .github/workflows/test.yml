@@ -27,3 +27,4 @@ jobs:
           kubectl kustomize deploy/agents/wiki-keeper > /dev/null
           kubectl kustomize deploy/agents/web-researcher > /dev/null
           kubectl kustomize deploy/agents/gmail-agent > /dev/null
+          kubectl kustomize deploy/agents/news-agent > /dev/null

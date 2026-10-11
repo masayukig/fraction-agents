@@ -1,0 +1,14 @@
+# The news agent's files as ConfigMaps, for deploy/agents/news-agent. They are generated here because kustomize
+# reads files only from under a kustomization's own directory.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+  - name: news-agent-agent-dir
+    files:
+      - AGENTS.md
+      - settings.json
+  # Made-up values. The environment's overlay replaces the whole ConfigMap (behavior: replace).
+  - name: news-agent-config
+    files:
+      - config.json=config.example.json
+      - news.json=news.example.json
