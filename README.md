@@ -24,6 +24,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0015. 返事の取り決めを A2A の拡張にし、submit_reply で受けた返事を DataPart で返す](docs/adr/0015-reply-contract-as-an-a2a-extension.md)
 - [0016. Gmail Agent: 本人の OAuth で Gmail を読み取り専用で読み、毎朝の一次選別をなつみに返す](docs/adr/0016-gmail-agent.md)
 - [0017. ニュース係: 情報源を定期的に取り込んで貯め、依頼の関心に沿って一次選別して返す](docs/adr/0017-news-agent.md)
+- [0018. 依存の更新は Renovate に追わせ、公開から 7 日経った版だけを受け取る](docs/adr/0018-dependency-updates-with-renovate.md)
 
 ## 汎用ホスト
 
