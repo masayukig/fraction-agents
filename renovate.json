@@ -1,0 +1,58 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "A version is proposed only once it has been public for seven days, so that a release pulled or fixed in its first week never reaches a branch. internalChecksFilter is already strict by default; it is stated so that the wait is read here as holding back the branch and the pull request themselves, not only a status check on them",
+  "extends": ["config:recommended", ":semanticCommitTypeAll(chore)"],
+  "timezone": "Asia/Tokyo",
+  "dependencyDashboard": true,
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "customManagers": [
+    {
+      "description": "The Node of the images' base is read as a Node release rather than as a Docker tag. A tag such as 24.12.0-bookworm-slim is pushed again each time its Debian layer is rebuilt, so its time is not when that Node came out, and Docker Hub does not always give a time at all; without one, the seven-day wait holds the image back for good while setup-node moves on alone. Read from the Node releases, both carry the same time and so are let through on the same day. The variant after the version is kept as written",
+      "customType": "regex",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": ["FROM node:(?<currentValue>\\d+\\.\\d+\\.\\d+)-"],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
+    },
+    {
+      "description": "pi is installed into the image by npm install -g rather than from a lock, so no manager reads its version. It is the runtime every agent runs on (ADR 0007), and the version written in the Dockerfile is the one the images carry",
+      "customType": "regex",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": ["npm install -g [^\\n]*?(?<depName>@earendil-works/pi-coding-agent)@(?<currentValue>[^\\s]+)"],
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "The Node the images run (the Dockerfile's base) and the Node the tests run (setup-node in the test workflow) are the same version on purpose: a test passing on one Node says little about another. Grouping them puts both on one branch, so they cannot drift apart one pull request at a time",
+      "matchDepNames": ["node"],
+      "matchManagers": ["custom.regex", "github-actions"],
+      "groupName": "node"
+    },
+    {
+      "description": "The same Node is read by the custom manager above, from the Node releases. Left on, the dockerfile manager would propose it a second time under the Docker tag's times",
+      "matchManagers": ["dockerfile"],
+      "matchDepNames": ["node"],
+      "enabled": false
+    },
+    {
+      "description": "@types/node describes the Node the code runs on, and its major follows Node's. A new major of it arrives before that Node is an LTS release the images can take, and type-checking against it would accept APIs the runtime lacks. Its major is raised by hand together with the node group",
+      "matchPackageNames": ["@types/node"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "The images named in the manifests are this repository's own. The manifests are a remote base, and the tag is chosen by the environment's overlay (ADR 0010), so the repository holding that overlay is where Renovate moves it. The kustomizations name them without a tag today, which Renovate already skips; this keeps them out should a tag ever be written here",
+      "matchPackageNames": ["ghcr.io/yuanying/fraction-agents", "ghcr.io/yuanying/fraction-agents-*"],
+      "enabled": false
+    },
+    {
+      "description": "Workflows are already read by the github-actions manager. Grouping them keeps a handful of actions from arriving as a handful of pull requests, since they are updated together and reviewed the same way. The Node of setup-node stays in the node group",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["action"],
+      "groupName": "github-actions"
+    }
+  ]
+}
