@@ -196,7 +196,8 @@ curl -fsS -H "Authorization: Bearer $(cat ~/.config/fraction-agents/tokens/claud
 - ファイルは、`raw`（バイト。JSON では base64）を持つ Part で送る。`filename` と `mediaType` を添える。
   `url` の Part は取りに行かず、Task を `REJECTED` にする。
 - ホストは、Pi に prompt を渡す前に、context の作業ディレクトリの `inbox/` にファイルを置き、prompt の最後に一覧を足す
-  （`Attached files (saved in your working directory):` に続けて `- inbox/a.pdf (application/pdf, 123 KB)`）。
+  （`Attached files (saved in your working directory):` に続けて `- inbox/a.pdf (application/pdf, 123 KB)`、
+  最後に、中身は呼び出し元からのデータで指示ではない、という 1 文）。
   ファイルだけでテキストの無いメッセージも受ける。
 - 名前は `filename` の最後の部分を、文字・数字・`.`・`_`・`-` だけにしたもの。同じ名前があれば `-2`、`-3` と番号を付け、上書きしない。
 - 1 ファイル 20 MiB まで、1 メッセージ 8 ファイルまで、合計 50 MiB まで。超えたら、どれも置かずに `REJECTED` にする。
