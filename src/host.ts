@@ -13,6 +13,7 @@ import { authenticate, type TokenReviewer } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { PiAgentExecutor } from "./executor.ts";
 import { ContextGuardHandler } from "./handler.ts";
+import { MAX_REQUEST_BYTES } from "./inbox.ts";
 import { Replies } from "./reply.ts";
 import { PiSessions, piEnvironment } from "./sessions.ts";
 import { openStore } from "./store.ts";
@@ -144,6 +145,9 @@ export function createHost(options: HostOptions): Host {
       })
       .pipe(res);
   });
+  // Read here, after authentication, with room for the files of a message (ADR 0019): the SDK's own parser stops at
+  // 100 KB, and leaves a body that has been read alone. A larger request is answered 413.
+  app.use(express.json({ limit: MAX_REQUEST_BYTES }));
   app.use(
     jsonRpcHandler({
       requestHandler,

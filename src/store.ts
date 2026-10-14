@@ -96,7 +96,7 @@ export class SqliteTaskStore implements TaskStore {
         task.contextId,
         task.status?.state ?? TaskState.TASK_STATE_UNSPECIFIED,
         task.status?.timestamp ?? "",
-        JSON.stringify(Task.toJSON(task)),
+        JSON.stringify(Task.toJSON(withoutFileBytes(task))),
       );
   }
 
@@ -205,6 +205,21 @@ export class SqliteTaskStore implements TaskStore {
 }
 
 /** Which caller owns which context, and which session file holds its conversation. */
+/**
+ * The task without the bytes of the files callers sent: those are saved in the context's working directory
+ * (ADR 0019), and kept here they would make every read of the task as large as the files. The part stays, with
+ * its file name and media type.
+ */
+function withoutFileBytes(task: Task): Task {
+  return {
+    ...task,
+    history: task.history.map((message) => ({
+      ...message,
+      parts: message.parts.map((part) => (part.content?.$case === "raw" ? { ...part, content: undefined } : part)),
+    })),
+  };
+}
+
 export class ContextRegistry {
   readonly #db: DatabaseSync;
 

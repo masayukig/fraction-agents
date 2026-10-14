@@ -5,6 +5,7 @@ import { Role, TaskState, type Message, type Part } from "@a2a-js/sdk";
 import { AgentEvent, type AgentExecutor, type ExecutionEventBus, type RequestContext } from "@a2a-js/sdk/server";
 
 import type { Artifacts } from "./artifacts.ts";
+import { filesOf } from "./inbox.ts";
 import { REPLY_EXTENSION_URI, renderReply, type Replies } from "./reply.ts";
 import type { PiSessions, PromptRun } from "./sessions.ts";
 import type { ContextRegistry } from "./store.ts";
@@ -45,6 +46,8 @@ interface Waiting {
  * extension also gets the reply itself as a data part (ADR 0015).
  * When an extension in pi asks a free-form question (`ctx.ui.input`), the task goes to INPUT_REQUIRED with the
  * question; the caller's next message to the same task is the answer, and the same prompt carries on.
+ * Files the caller sends with a new task are saved in the context's working directory for pi (ADR 0019); an answer
+ * is taken as text only.
  */
 export class PiAgentExecutor implements AgentExecutor {
   readonly #options: PiAgentExecutorOptions;
@@ -82,9 +85,14 @@ export class PiAgentExecutor implements AgentExecutor {
     );
     const status = (state: TaskState, text?: string) => publishStatus(bus, taskId, contextId, state, text);
 
+    const files = filesOf(userMessage);
+    if (typeof files === "string") {
+      status(TaskState.TASK_STATE_REJECTED, files);
+      return;
+    }
     const text = textOf(userMessage);
-    if (text === "") {
-      status(TaskState.TASK_STATE_REJECTED, "This agent accepts text parts only.");
+    if (text === "" && files.length === 0) {
+      status(TaskState.TASK_STATE_REJECTED, "This agent accepts text parts and file parts (raw bytes); the message had neither.");
       return;
     }
 
@@ -92,6 +100,7 @@ export class PiAgentExecutor implements AgentExecutor {
       { contextId, caller, sessionPath: join(this.#options.sessionsDir, context.sessionFile) },
       taskId,
       text,
+      files,
     );
     if (!run) {
       const busy = this.#options.sessions.runningTask(contextId);

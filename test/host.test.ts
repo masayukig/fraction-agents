@@ -556,6 +556,92 @@ describe("context workspaces", () => {
   });
 });
 
+describe("files from the caller", () => {
+  function filePart(filename: string, bytes: Buffer | string, mediaType = "application/octet-stream"): Json {
+    return { raw: Buffer.from(bytes).toString("base64"), filename, mediaType };
+  }
+
+  async function sendParts(url: string, parts: Json[], extra: Record<string, unknown> = {}): Promise<Json> {
+    const body = await rpc(url, "owner", "SendMessage", {
+      message: { messageId: crypto.randomUUID(), role: "ROLE_USER", parts, ...extra },
+      configuration: { returnImmediately: true },
+    });
+    assert.equal(body.error, undefined, JSON.stringify(body.error));
+    return waitForTask(url, "owner", body.result.task.id);
+  }
+
+  it("saves the files in inbox/ of the context's directory and tells pi where they are", async () => {
+    const { config } = workspaceConfig(tempDir());
+    const { url } = await start(config);
+    // Larger than the 100 KB the SDK's own parser would read.
+    const pdf = Buffer.alloc(300 * 1024, 7);
+    const done = await sendParts(url, [{ text: "read this" }, filePart("a.pdf", pdf, "application/pdf")]);
+    assert.equal(done.status.state, "TASK_STATE_COMPLETED", statusText(done));
+    assert.match(
+      resultText(done),
+      /^echo:read this\n\nAttached files \(saved in your working directory\):\n- inbox\/a\.pdf \(application\/pdf, 300 KB\)\|turn=1/,
+    );
+    assert.deepEqual(readFileSync(join(config.workDir, done.contextId, "inbox", "a.pdf")), pdf);
+    const part = done.history[0].parts[1];
+    assert.deepEqual(
+      { raw: part.raw, filename: part.filename, mediaType: part.mediaType },
+      { raw: undefined, filename: "a.pdf", mediaType: "application/pdf" },
+      "the task keeps the part without its bytes",
+    );
+  });
+
+  it("accepts a message of files alone", async () => {
+    const { url, config } = await start(makeConfig(tempDir()));
+    const done = await sendParts(url, [filePart("notes.txt", "hello")]);
+    assert.equal(done.status.state, "TASK_STATE_COMPLETED", statusText(done));
+    assert.match(resultText(done), /^echo:Attached files .*\n- inbox\/notes\.txt \(application\/octet-stream, 5 bytes\)\|/s);
+    assert.equal(readFileSync(join(config.workDir, "inbox", "notes.txt"), "utf8"), "hello");
+  });
+
+  it("saves under a plain name, and numbers a name already taken, also in a later turn", async () => {
+    const { config } = workspaceConfig(tempDir());
+    const { url } = await start(config);
+    const first = await sendParts(url, [
+      { text: "one" },
+      filePart("../../.ssh/見積 書.pdf", "a"),
+      filePart("見積_書.pdf", "b"),
+      filePart("", "c", "text/plain; evil"),
+    ]);
+    assert.equal(first.status.state, "TASK_STATE_COMPLETED", statusText(first));
+    assert.match(resultText(first), /- inbox\/見積_書\.pdf .*\n- inbox\/見積_書-2\.pdf .*\n- inbox\/file \(application\/octet-stream, 1 bytes\)\|/s);
+    const second = await sendParts(url, [{ text: "two" }, filePart("見積 書.pdf", "d")], { contextId: first.contextId });
+    assert.match(resultText(second), /- inbox\/見積_書-3\.pdf .*\|turn=2/);
+    const inbox = join(config.workDir, first.contextId, "inbox");
+    assert.deepEqual(readdirSync(inbox).sort(), ["file", "見積_書-2.pdf", "見積_書-3.pdf", "見積_書.pdf"]);
+    assert.equal(readFileSync(join(inbox, "見積_書-3.pdf"), "utf8"), "d");
+  });
+
+  it("rejects more than 8 files without starting pi", async () => {
+    const { url, config } = await start(makeConfig(tempDir()));
+    const parts = Array.from({ length: 9 }, (_, index) => filePart(`f${index}.txt`, "x"));
+    const done = await sendParts(url, [{ text: "many" }, ...parts]);
+    assert.equal(done.status.state, "TASK_STATE_REJECTED");
+    assert.match(statusText(done), /at most 8 files/);
+    assert.deepEqual(spawns(config), []);
+    assert.equal(existsSync(join(config.workDir, "inbox")), false);
+  });
+
+  it("rejects a file given by URL, which it does not fetch", async () => {
+    const { url, config } = await start(makeConfig(tempDir()));
+    const done = await sendParts(url, [{ text: "look" }, { url: "https://example.com/a.pdf", filename: "a.pdf", mediaType: "application/pdf" }]);
+    assert.equal(done.status.state, "TASK_STATE_REJECTED");
+    assert.match(statusText(done), /does not fetch files by URL/);
+    assert.deepEqual(spawns(config), []);
+  });
+
+  it("rejects a message with neither text nor files", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const done = await sendParts(url, [{ data: { a: 1 }, mediaType: "application/json" }]);
+    assert.equal(done.status.state, "TASK_STATE_REJECTED");
+    assert.match(statusText(done), /text parts and file parts/);
+  });
+});
+
 async function waitForState(url: string, token: string, id: string, state: string): Promise<Json> {
   for (let i = 0; i < 200; i++) {
     const body = await rpc(url, token, "GetTask", { id });

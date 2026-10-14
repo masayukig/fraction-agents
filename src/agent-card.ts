@@ -41,7 +41,8 @@ export function buildAgentCard(config: Config): AgentCard {
       },
     },
     securityRequirements: [{ schemes: { bearer: { list: [] } } }],
-    defaultInputModes: ["text/plain"],
+    // Files of any type, as parts with the bytes (ADR 0019).
+    defaultInputModes: ["text/plain", "*/*"],
     defaultOutputModes: ["text/plain"],
     skills: config.skills.map((skill) => ({
       id: skill.id,
