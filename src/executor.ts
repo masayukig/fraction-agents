@@ -5,7 +5,7 @@ import { Role, TaskState, type Message, type Part } from "@a2a-js/sdk";
 import { AgentEvent, type AgentExecutor, type ExecutionEventBus, type RequestContext } from "@a2a-js/sdk/server";
 
 import type { Artifacts } from "./artifacts.ts";
-import { filesOf } from "./inbox.ts";
+import { filesOf, withoutFileBytes } from "./inbox.ts";
 import { REPLY_EXTENSION_URI, renderReply, type Replies } from "./reply.ts";
 import type { PiSessions, PromptRun } from "./sessions.ts";
 import type { ContextRegistry } from "./store.ts";
@@ -79,7 +79,8 @@ export class PiAgentExecutor implements AgentExecutor {
         contextId,
         status: { state: TaskState.TASK_STATE_SUBMITTED, message: undefined, timestamp: timestamp() },
         artifacts: [],
-        history: [userMessage],
+        // Without the files' bytes, so that the task the SDK answers SendMessage with does not carry them back.
+        history: [withoutFileBytes(userMessage)],
         metadata: {},
       }),
     );

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { A2A_AUDIENCE, type TokenReviewer } from "../src/auth.ts";
 import { parseConfig, type Config } from "../src/config.ts";
 import { createHost, type Host } from "../src/host.ts";
+import { MAX_REQUEST_BYTES } from "../src/inbox.ts";
 import { REPLY_EXTENSION_URI } from "../src/reply.ts";
 import { PI_BASE_ENV } from "../src/sessions.ts";
 import { IMAGES } from "./fixtures/images.ts";
@@ -632,6 +633,59 @@ describe("files from the caller", () => {
     assert.equal(done.status.state, "TASK_STATE_REJECTED");
     assert.match(statusText(done), /does not fetch files by URL/);
     assert.deepEqual(spawns(config), []);
+  });
+
+  it("returns the task to SendMessage without the files' bytes", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const parts = [{ text: "hi" }, filePart("a.txt", "secret bytes")];
+    for (const configuration of [{ returnImmediately: true }, {}]) {
+      const body = await rpc(url, "owner", "SendMessage", {
+        message: { messageId: crypto.randomUUID(), role: "ROLE_USER", parts },
+        configuration,
+      });
+      assert.equal(body.error, undefined, JSON.stringify(body.error));
+      assert.equal(JSON.stringify(body).includes(Buffer.from("secret bytes").toString("base64")), false, JSON.stringify(configuration));
+      assert.equal(body.result.task.history[0].parts[1].filename, "a.txt");
+      await waitForTask(url, "owner", body.result.task.id);
+    }
+  });
+
+  it("fails the task, writing nothing, when inbox/ is a link to somewhere else", async () => {
+    const dir = tempDir();
+    const { config } = workspaceConfig(dir);
+    const { url } = await start(config);
+    const first = await sendParts(url, [{ text: "one" }]);
+    const elsewhere = join(dir, "elsewhere");
+    mkdirSync(elsewhere);
+    symlinkSync(elsewhere, join(config.workDir, first.contextId, "inbox"));
+    const done = await sendParts(url, [{ text: "two" }, filePart("a.txt", "x")], { contextId: first.contextId });
+    assert.equal(done.status.state, "TASK_STATE_FAILED");
+    assert.match(statusText(done), /inbox in the working directory is not a directory/);
+    assert.deepEqual(readdirSync(elsewhere), []);
+  });
+
+  it("answers a body that is not JSON with a JSON-RPC parse error", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer owner" },
+      body: "{bad",
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Invalid JSON payload." } });
+  });
+
+  it("answers a body over the limit with a JSON-RPC error", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer owner" },
+      body: Buffer.alloc(MAX_REQUEST_BYTES + 1, 0x20),
+    });
+    assert.equal(response.status, 413);
+    const body = await response.json();
+    assert.equal(body.error.code, -32600);
+    assert.match(body.error.message, /over \d+ bytes/);
   });
 
   it("rejects a message with neither text nor files", async () => {

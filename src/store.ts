@@ -5,6 +5,8 @@ import { Role, Task, TaskState, type ListTasksRequest, type ListTasksResponse } 
 import { RequestMalformedError } from "@a2a-js/sdk/errors";
 import { resolveUserScope, type ServerCallContext, type TaskStore } from "@a2a-js/sdk/server";
 
+import { withoutFileBytes as withoutMessageFileBytes } from "./inbox.ts";
+
 const DEFAULT_PAGE_SIZE = 50;
 const UNFINISHED = [TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING, TaskState.TASK_STATE_INPUT_REQUIRED];
 
@@ -204,22 +206,12 @@ export class SqliteTaskStore implements TaskStore {
   }
 }
 
-/** Which caller owns which context, and which session file holds its conversation. */
-/**
- * The task without the bytes of the files callers sent: those are saved in the context's working directory
- * (ADR 0019), and kept here they would make every read of the task as large as the files. The part stays, with
- * its file name and media type.
- */
+/** The task without the bytes of the files callers sent (ADR 0019). */
 function withoutFileBytes(task: Task): Task {
-  return {
-    ...task,
-    history: task.history.map((message) => ({
-      ...message,
-      parts: message.parts.map((part) => (part.content?.$case === "raw" ? { ...part, content: undefined } : part)),
-    })),
-  };
+  return { ...task, history: task.history.map(withoutMessageFileBytes) };
 }
 
+/** Which caller owns which context, and which session file holds its conversation. */
 export class ContextRegistry {
   readonly #db: DatabaseSync;
 
