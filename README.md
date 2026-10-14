@@ -25,6 +25,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0016. Gmail Agent: 本人の OAuth で Gmail を読み取り専用で読み、毎朝の一次選別をなつみに返す](docs/adr/0016-gmail-agent.md)
 - [0017. ニュース係: 情報源を定期的に取り込んで貯め、依頼の関心に沿って一次選別して返す](docs/adr/0017-news-agent.md)
 - [0018. 依存の更新は Renovate に追わせ、公開から 7 日経った版だけを受け取る](docs/adr/0018-dependency-updates-with-renovate.md)
+- [0019. 呼び出し元が送るファイルは、バイトの part で受け、context の作業ディレクトリの inbox/ に置く](docs/adr/0019-receive-files-into-the-working-directory.md)
 
 ## 汎用ホスト
 
@@ -187,6 +188,20 @@ a2a send -a https://agents.example.test/wiki-keeper/ --task-id <task-id> "index 
 a2a task get -a https://agents.example.test/web-researcher/ <task-id>   # artifact の url を見る
 curl -fsS -H "Authorization: Bearer $(cat ~/.config/fraction-agents/tokens/claude)" -o shot.png <url>
 ```
+
+### ファイルを受け取る
+
+呼び出し元は、Task のメッセージにファイルを添えられる（ADR 0019）。
+
+- ファイルは、`raw`（バイト。JSON では base64）を持つ Part で送る。`filename` と `mediaType` を添える。
+  `url` の Part は取りに行かず、Task を `REJECTED` にする。
+- ホストは、Pi に prompt を渡す前に、context の作業ディレクトリの `inbox/` にファイルを置き、prompt の最後に一覧を足す
+  （`Attached files (saved in your working directory):` に続けて `- inbox/a.pdf (application/pdf, 123 KB)`）。
+  ファイルだけでテキストの無いメッセージも受ける。
+- 名前は `filename` の最後の部分を、文字・数字・`.`・`_`・`-` だけにしたもの。同じ名前があれば `-2`、`-3` と番号を付け、上書きしない。
+- 1 ファイル 20 MiB まで、1 メッセージ 8 ファイルまで、合計 50 MiB まで。超えたら、どれも置かずに `REJECTED` にする。
+- Task の履歴には、ファイルの Part を名前と形式だけ残し、バイトは残さない。
+- 聞き返しへの答えは、テキストだけを読む。
 
 ### 構造のある返事
 
