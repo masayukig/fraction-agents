@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:24.12.0-bookworm-slim AS build
+FROM node:24.21.0-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -10,7 +10,7 @@ COPY pi-package/lib/reply.ts ./pi-package/lib/reply.ts
 RUN npm run build
 
 # The generic host: the A2A adapter as PID 1, and pi, which it starts once per context.
-FROM node:24.12.0-bookworm-slim AS host
+FROM node:24.21.0-bookworm-slim AS host
 ENV NODE_ENV=production
 # What pi's own container recipe installs: a shell and git for its tools, ripgrep for search, CA certificates.
 RUN apt-get update \
@@ -23,6 +23,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist/src ./dist/src
 COPY --from=build /app/dist/pi-package ./dist/pi-package
+# Mermaid's browser bundle, which the report pages serve from their own origin (ADR 0021). The package itself is a
+# dev dependency: only this one file is needed.
+COPY --from=build /app/node_modules/mermaid/dist/mermaid.min.js ./dist/assets/mermaid.min.js
 # The fraction-agents Pi package (ADR 0008). Agents load it by this path from their settings, so its version is
 # the image's. Its TypeScript runs as is: pi loads the extensions, and node runs the workspace command.
 COPY pi-package/package.json /opt/fraction-agents/pi-package/package.json
@@ -78,6 +81,22 @@ USER root
 # The version is pinned by the lock. Pi provides the package's peer dependencies (.npmrc: legacy-peer-deps).
 WORKDIR /opt/fraction-agents/news-agent
 COPY images/news-agent/package.json images/news-agent/package-lock.json images/news-agent/.npmrc ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+WORKDIR /app
+USER node
+
+# The deep researcher (ADR 0022): the generic host with the Pi package that reads a page, and fd for pi's find tool
+# (git and ripgrep, for the clones and pi's grep, are in the host already). It clones and reads public repositories
+# and never runs them. Built with --target deep-researcher; no browser.
+FROM host AS deep-researcher
+USER root
+# Debian names fd's command fdfind; pi looks for both names, and would otherwise download fd at its first find.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends fd-find \
+  && rm -rf /var/lib/apt/lists/*
+# The version is pinned by the lock. Pi provides the package's peer dependencies (.npmrc: legacy-peer-deps).
+WORKDIR /opt/fraction-agents/deep-researcher
+COPY images/deep-researcher/package.json images/deep-researcher/package-lock.json images/deep-researcher/.npmrc ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 WORKDIR /app
 USER node

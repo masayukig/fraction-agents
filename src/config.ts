@@ -20,6 +20,30 @@ export interface ContextWorkspaceConfig {
   remove: string[];
 }
 
+/** The pages people read reports on (ADR 0021): a listener of their own, behind gated. */
+export interface ReportsWebConfig {
+  /** The port of the listener. Not the A2A one. */
+  port: number;
+  /** The URL people open the pages at. The reply's link and the audience of gated's assertions come from it. */
+  publicUrl: string;
+  gated: {
+    /** The issuer of the assertions accepted: the origin of gated's central authentication host. */
+    issuer: string;
+    /** Where gated publishes the keys of its assertions. Never taken from an assertion. */
+    jwksUrl: string;
+  };
+  /** The subjects allowed to read, e.g. `github:<login>`. */
+  allowedSubjects: string[];
+}
+
+/** Replies the host keeps as reports (ADR 0020). */
+export interface ReportsConfig {
+  /** Where the reports are kept: a directory of their own, so that it alone can be backed up. */
+  dir: string;
+  /** When set, the pages for people are served (ADR 0021). */
+  web?: ReportsWebConfig;
+}
+
 /** The one configuration file of a generic host. It holds no secrets. */
 export interface Config {
   /** Name, description, version and skills shown in the Agent Card. */
@@ -58,6 +82,17 @@ export interface Config {
    * every context runs pi in `workDir` itself.
    */
   contextWorkspace?: ContextWorkspaceConfig;
+  /**
+   * How long a task may work, not counting the time it waits for its turn or for the caller's answer. When it is
+   * reached, the agent is told to wrap up (ADR 0019). No limit when not set.
+   */
+  taskTimeLimitSeconds?: number;
+  /** How long the agent has to wrap up once told, before the host stops the prompt. */
+  taskTimeLimitGraceSeconds: number;
+  /** How many tasks may work at once in the whole agent. Further tasks wait for their turn. No limit when not set. */
+  maxConcurrentTasks?: number;
+  /** When set, completed tasks' replies are kept as reports (ADR 0020). */
+  reports?: ReportsConfig;
 }
 
 const SERVICE_ACCOUNT = /^system:serviceaccount:[^:]+:[^:]+$/;
@@ -70,13 +105,14 @@ export function loadConfig(path: string): Config {
 export function parseConfig(input: unknown): Config {
   if (!isRecord(input)) throw new Error("config: expected a JSON object");
   const dataDir = absolutePath(input, "dataDir");
+  const listenPort = input.port === undefined ? 8080 : port(input.port);
   return {
     name: text(input, "name"),
     description: text(input, "description"),
     version: input.version === undefined ? "0.0.0" : text(input, "version"),
     skills: skills(input.skills),
     publicUrl: url(input, "publicUrl"),
-    port: input.port === undefined ? 8080 : port(input.port),
+    port: listenPort,
     allowedCallers: callers(input.allowedCallers),
     agentDir: absolutePath(input, "agentDir"),
     dataDir,
@@ -90,6 +126,11 @@ export function parseConfig(input: unknown): Config {
     piCommand: input.piCommand === undefined ? ["pi"] : command(input.piCommand),
     passEnv: input.passEnv === undefined ? [] : envNames(input.passEnv),
     ...(input.contextWorkspace === undefined ? {} : { contextWorkspace: contextWorkspace(input.contextWorkspace) }),
+    ...(input.taskTimeLimitSeconds === undefined ? {} : { taskTimeLimitSeconds: duration(input, "taskTimeLimitSeconds") }),
+    taskTimeLimitGraceSeconds:
+      input.taskTimeLimitGraceSeconds === undefined ? 300 : duration(input, "taskTimeLimitGraceSeconds"),
+    ...(input.maxConcurrentTasks === undefined ? {} : { maxConcurrentTasks: count(input.maxConcurrentTasks, "maxConcurrentTasks") }),
+    ...(input.reports === undefined ? {} : { reports: reports(input.reports, dataDir, listenPort) }),
   };
 }
 
@@ -97,29 +138,64 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function text(input: Record<string, unknown>, field: string): string {
+/** `name` is the field as the error message calls it, when it is nested. */
+function text(input: Record<string, unknown>, field: string, name = field): string {
   const value = input[field];
-  if (typeof value !== "string" || value.trim() === "") throw new Error(`config: ${field} must be a non-empty string`);
+  if (typeof value !== "string" || value.trim() === "") throw new Error(`config: ${name} must be a non-empty string`);
   return value;
 }
 
-function absolutePath(input: Record<string, unknown>, field: string): string {
-  const value = text(input, field);
-  if (!isAbsolute(value)) throw new Error(`config: ${field} must be an absolute path`);
+function absolutePath(input: Record<string, unknown>, field: string, name = field): string {
+  const value = text(input, field, name);
+  if (!isAbsolute(value)) throw new Error(`config: ${name} must be an absolute path`);
   return value;
 }
 
-function url(input: Record<string, unknown>, field: string): string {
-  const value = text(input, field);
-  if (!URL.canParse(value)) throw new Error(`config: ${field} must be a URL`);
+function url(input: Record<string, unknown>, field: string, name = field): string {
+  const value = text(input, field, name);
+  if (!URL.canParse(value)) throw new Error(`config: ${name} must be a URL`);
   return value;
 }
 
-function port(value: unknown): number {
+function port(value: unknown, field = "port"): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65535) {
-    throw new Error("config: port must be an integer between 1 and 65535");
+    throw new Error(`config: ${field} must be an integer between 1 and 65535`);
   }
   return value;
+}
+
+function count(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new Error(`config: ${field} must be a positive integer`);
+  }
+  return value;
+}
+
+function reports(value: unknown, dataDir: string, listenPort: number): ReportsConfig {
+  if (!isRecord(value)) throw new Error("config: reports must be an object");
+  return {
+    dir: value.dir === undefined ? join(dataDir, "reports") : absolutePath(value, "dir", "reports.dir"),
+    ...(value.web === undefined ? {} : { web: reportsWeb(value.web, listenPort) }),
+  };
+}
+
+function reportsWeb(value: unknown, listenPort: number): ReportsWebConfig {
+  if (!isRecord(value)) throw new Error("config: reports.web must be an object");
+  if (value.port === undefined) throw new Error("config: reports.web.port is required");
+  const webPort = port(value.port, "reports.web.port");
+  if (webPort === listenPort) throw new Error("config: reports.web.port must not be the A2A port");
+  if (!isRecord(value.gated)) throw new Error("config: reports.web.gated must be an object");
+  const issuer = url(value.gated, "issuer", "reports.web.gated.issuer");
+  if (new URL(issuer).origin !== issuer) throw new Error("config: reports.web.gated.issuer must be an origin, such as https://auth.example.com");
+  if (value.allowedSubjects === undefined) throw new Error("config: reports.web.allowedSubjects is required");
+  const allowedSubjects = stringList(value.allowedSubjects, "reports.web.allowedSubjects");
+  if (allowedSubjects.length === 0) throw new Error("config: reports.web.allowedSubjects must not be empty");
+  return {
+    port: webPort,
+    publicUrl: url(value, "publicUrl", "reports.web.publicUrl"),
+    gated: { issuer, jwksUrl: url(value.gated, "jwksUrl", "reports.web.gated.jwksUrl") },
+    allowedSubjects,
+  };
 }
 
 function duration(input: Record<string, unknown>, field: string): number {

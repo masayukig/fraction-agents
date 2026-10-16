@@ -1,4 +1,5 @@
 import { createReadStream, mkdirSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -12,10 +13,15 @@ import { Artifacts } from "./artifacts.ts";
 import { authenticate, type TokenReviewer } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { PiAgentExecutor } from "./executor.ts";
+import { AssertionVerifier, audienceOf } from "./gated-assertion.ts";
 import { ContextGuardHandler } from "./handler.ts";
 import { MAX_REQUEST_BYTES } from "./inbox.ts";
 import { Replies } from "./reply.ts";
+import { renderReportHtml } from "./report-html.ts";
+import { reportWebApp } from "./report-web.ts";
+import { reportMarkdown, Reports, reportTitle } from "./reports.ts";
 import { PiSessions, piEnvironment } from "./sessions.ts";
+import { TaskSlots } from "./slots.ts";
 import { openStore } from "./store.ts";
 import { ContextWorkspaces } from "./workspace.ts";
 
@@ -29,6 +35,8 @@ export interface HostOptions {
 export interface Host {
   /** Starts serving and resolves with the base URL. */
   listen(port: number, hostname?: string): Promise<string>;
+  /** Starts serving the pages for people on their own listener (ADR 0021), and resolves with its base URL. */
+  listenWeb(port: number, hostname?: string): Promise<string>;
   /**
    * Deletes the session files and records of contexts unused for longer than the retention period, and the images
    * past theirs.
@@ -87,6 +95,9 @@ export function createHost(options: HostOptions): Host {
     const removed = await workspaces.remove(contextId, piEnvironment(config, caller, contextId));
     if (!removed.ok) console.error(`context ${contextId}: removing the workspace failed: ${removed.error}`);
   };
+  const reports = config.reports ? new Reports(config.reports.dir) : undefined;
+  const pageUrl = (id: string) => new URL(`reports/${id}`, withSlash(config.reports!.web!.publicUrl)).href;
+  const slots = new TaskSlots(config.maxConcurrentTasks);
   const executor = new PiAgentExecutor({
     contexts: store.contexts,
     sessions,
@@ -97,6 +108,27 @@ export function createHost(options: HostOptions): Host {
     now,
     inputTimeoutMs: config.inputTimeoutSeconds * 1000,
     failTask: (taskId, caller, reason) => store.tasks.fail(taskId, caller, reason),
+    slots,
+    ...(config.taskTimeLimitSeconds === undefined
+      ? {}
+      : { timeLimit: { limitMs: config.taskTimeLimitSeconds * 1000, graceMs: config.taskTimeLimitGraceSeconds * 1000 } }),
+    ...(reports
+      ? {
+          keepReport: ({ taskId, contextId, caller, reply, partial }) => {
+            try {
+              reports.save(
+                { id: taskId, owner: caller, contextId, title: reportTitle(reply.summary), createdAt: now(), partial },
+                reportMarkdown(reply, partial),
+              );
+            } catch (error) {
+              console.error(`task ${taskId}: keeping the report failed: ${error instanceof Error ? error.message : String(error)}`);
+              return undefined;
+            }
+            console.log(`task ${taskId}: kept the reply as a report`);
+            return config.reports?.web ? pageUrl(taskId) : undefined;
+          },
+        }
+      : {}),
   });
   const requestHandler = new ContextGuardHandler(
     new DefaultRequestHandler(buildAgentCard(config), store.tasks, executor),
@@ -145,6 +177,49 @@ export function createHost(options: HostOptions): Host {
       })
       .pipe(res);
   });
+  if (reports) {
+    // The reports, to the caller that sent the task (ADR 0020). Another's report is the same as none.
+    const reportHeaders = (res: express.Response) => {
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+    };
+    app.get("/reports", (req, res) => {
+      reportHeaders(res);
+      res.json({
+        reports: reports.list(callers.get(req)!).map((record) => ({
+          id: record.id,
+          title: record.title,
+          createdAt: new Date(record.createdAt).toISOString(),
+          partial: record.partial,
+        })),
+      });
+    });
+    app.get("/reports/:name", (req, res, next) => {
+      reportHeaders(res);
+      const match = /^([^.]+)\.(md|html)$/.exec(req.params.name);
+      if (!match) {
+        next();
+        return;
+      }
+      const record = reports.get(match[1]!, callers.get(req)!);
+      const markdown = record ? reports.markdown(record.id, record.owner) : undefined;
+      if (!record || markdown === undefined) {
+        res.status(404).json({ error: "report not found" });
+        return;
+      }
+      if (match[2] === "md") res.type("text/markdown; charset=utf-8").send(markdown);
+      else res.type("text/html; charset=utf-8").send(renderReportHtml(record, markdown, { web: false }));
+    });
+    app.delete("/reports/:id", (req, res) => {
+      reportHeaders(res);
+      if (!reports.delete(req.params.id, callers.get(req)!)) {
+        res.status(404).json({ error: "report not found" });
+        return;
+      }
+      console.log(`report ${req.params.id}: deleted by ${callers.get(req)}`);
+      res.status(204).end();
+    });
+  }
   // Read here, after authentication, with room for the files of a message (ADR 0019): the SDK's own parser stops at
   // 100 KB, and leaves a body that has been read alone. Its errors are answered the way the SDK answers them.
   app.use(express.json({ limit: MAX_REQUEST_BYTES }), (error: unknown, _req: Request, res: Response, next: NextFunction) => {
@@ -196,28 +271,53 @@ export function createHost(options: HostOptions): Host {
   sweepTimer.unref();
 
   let server: Server | undefined;
+  let webServer: Server | undefined;
   return {
-    listen(port, hostname) {
-      return new Promise((resolve, reject) => {
-        const listening = app.listen(port, hostname ?? "::", (error?: Error) => {
-          if (error) return reject(error);
-          const address = listening.address() as AddressInfo;
-          const host = address.family === "IPv6" ? `[${address.address}]` : address.address;
-          resolve(`http://${host}:${address.port}`);
-        });
-        server = listening;
+    listenWeb(port, hostname) {
+      const web = config.reports?.web;
+      if (!reports || !web) return Promise.reject(new Error("the config has no reports.web"));
+      const verifier = new AssertionVerifier({
+        issuer: web.gated.issuer,
+        jwksUrl: web.gated.jwksUrl,
+        audience: audienceOf(web.publicUrl),
+        allowedSubjects: web.allowedSubjects,
       });
+      webServer = createServer(reportWebApp({ reports, verifier }));
+      return serve(webServer, port, hostname);
+    },
+    listen(port, hostname) {
+      server = createServer(app);
+      return serve(server, port, hostname);
     },
     sweep,
     async close() {
       clearInterval(sweepTimer);
-      if (server) {
-        const closed = new Promise<void>((resolve) => server!.close(() => resolve()));
-        server.closeAllConnections();
-        await closed;
-      }
+      await Promise.all([server, webServer].map((each) => (each ? closeServer(each) : undefined)));
+      slots.close();
       await sessions.close();
       store.close();
     },
   };
+}
+
+function serve(server: Server, port: number, hostname: string | undefined): Promise<string> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, hostname ?? "::", () => {
+      server.off("error", reject);
+      const address = server.address() as AddressInfo;
+      const host = address.family === "IPv6" ? `[${address.address}]` : address.address;
+      resolve(`http://${host}:${address.port}`);
+    });
+  });
+}
+
+async function closeServer(server: Server): Promise<void> {
+  const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+  server.closeAllConnections();
+  await closed;
+}
+
+function withSlash(url: string): string {
+  return url.endsWith("/") ? url : `${url}/`;
 }

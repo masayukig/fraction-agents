@@ -30,6 +30,65 @@ describe("config", () => {
     assert.equal(config.contextWorkspace, undefined);
     assert.equal(config.inputTimeoutSeconds, 86400);
     assert.equal(config.artifactRetentionSeconds, 604800);
+    assert.equal(config.taskTimeLimitSeconds, undefined);
+    assert.equal(config.taskTimeLimitGraceSeconds, 300);
+    assert.equal(config.maxConcurrentTasks, undefined);
+    assert.equal(config.reports, undefined);
+  });
+
+  it("takes a time limit for a task and its grace period", () => {
+    const config = parseConfig({ ...minimal, taskTimeLimitSeconds: 3600, taskTimeLimitGraceSeconds: 120 });
+    assert.equal(config.taskTimeLimitSeconds, 3600);
+    assert.equal(config.taskTimeLimitGraceSeconds, 120);
+    assert.throws(() => parseConfig({ ...minimal, taskTimeLimitSeconds: 0 }), /taskTimeLimitSeconds/);
+    assert.throws(() => parseConfig({ ...minimal, taskTimeLimitGraceSeconds: "5m" }), /taskTimeLimitGraceSeconds/);
+  });
+
+  it("takes how many tasks may run at once", () => {
+    assert.equal(parseConfig({ ...minimal, maxConcurrentTasks: 2 }).maxConcurrentTasks, 2);
+    assert.throws(() => parseConfig({ ...minimal, maxConcurrentTasks: 0 }), /maxConcurrentTasks/);
+    assert.throws(() => parseConfig({ ...minimal, maxConcurrentTasks: 1.5 }), /maxConcurrentTasks/);
+  });
+
+  describe("reports", () => {
+    const web = {
+      port: 8081,
+      publicUrl: "https://reports.example.test/",
+      gated: { issuer: "https://auth.example.test", jwksUrl: "https://auth.example.test/__gated/jwks.json" },
+      allowedSubjects: ["github:alice"],
+    };
+
+    it("keeps reports under the data directory unless told otherwise, with no pages for people", () => {
+      assert.deepEqual(parseConfig({ ...minimal, reports: {} }).reports, { dir: "/data/reports" });
+      assert.deepEqual(parseConfig({ ...minimal, reports: { dir: "/backup/reports" } }).reports, { dir: "/backup/reports" });
+      assert.throws(() => parseConfig({ ...minimal, reports: { dir: "reports" } }), /reports\.dir/);
+      assert.throws(() => parseConfig({ ...minimal, reports: true }), /reports/);
+    });
+
+    it("takes the listener of the pages for people", () => {
+      assert.deepEqual(parseConfig({ ...minimal, reports: { web } }).reports, { dir: "/data/reports", web });
+    });
+
+    it("requires every field of the pages for people", () => {
+      for (const field of ["port", "publicUrl", "gated", "allowedSubjects"]) {
+        const partial: Record<string, unknown> = { ...web };
+        delete partial[field];
+        assert.throws(() => parseConfig({ ...minimal, reports: { web: partial } }), new RegExp(`reports\\.web\\.${field}`));
+      }
+      assert.throws(
+        () => parseConfig({ ...minimal, reports: { web: { ...web, gated: { issuer: web.gated.issuer } } } }),
+        /reports\.web\.gated\.jwksUrl/,
+      );
+      assert.throws(
+        () => parseConfig({ ...minimal, reports: { web: { ...web, gated: { ...web.gated, issuer: "auth.example.test" } } } }),
+        /reports\.web\.gated\.issuer/,
+      );
+      assert.throws(() => parseConfig({ ...minimal, reports: { web: { ...web, allowedSubjects: [] } } }), /allowedSubjects/);
+    });
+
+    it("refuses the A2A port for the pages for people", () => {
+      assert.throws(() => parseConfig({ ...minimal, port: 8081, reports: { web } }), /reports\.web\.port/);
+    });
   });
 
   it("takes the commands that prepare and remove a context's workspace", () => {
@@ -134,5 +193,16 @@ describe("the agents' examples", () => {
       assert.match(config.description, /前回の受け取り/, `${agent}'s Agent Card`);
       assert.match(readFileSync(join(agentsDir, agent, "AGENTS.md"), "utf8"), /前回の受け取り/, `${agent}'s AGENTS.md`);
     }
+  });
+
+  // The deep researcher reads code and never runs it (ADR 0022): pi gives it the reading tools only, and the host
+  // leaves out the tools that run or change things and the one that searches outside (the extensions stop them too).
+  it("give the deep researcher only the reading tools", () => {
+    const config = loadConfig(join(agentsDir, "deep-researcher", "config.example.json"));
+    const excluded = config.piCommand[config.piCommand.indexOf("--exclude-tools") + 1]?.split(",") ?? [];
+    for (const tool of ["bash", "edit", "write", "web_search"]) assert.ok(excluded.includes(tool), tool);
+    const settings = JSON.parse(readFileSync(join(agentsDir, "deep-researcher", "settings.json"), "utf8"));
+    assert.deepEqual(settings.defaultTools, ["read", "grep", "find", "ls"]);
+    assert.ok(config.contextWorkspace, "each context has a workspace of its own for its clones");
   });
 });

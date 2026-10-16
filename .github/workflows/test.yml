@@ -12,10 +12,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24.12.0
+          node-version: 24.21.0
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -28,3 +28,4 @@ jobs:
           kubectl kustomize deploy/agents/web-researcher > /dev/null
           kubectl kustomize deploy/agents/gmail-agent > /dev/null
           kubectl kustomize deploy/agents/news-agent > /dev/null
+          kubectl kustomize deploy/agents/deep-researcher > /dev/null

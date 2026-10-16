@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: host
+          ports:
+            - name: http
+              containerPort: 8080
+            # reports.web.port of config.json (ADR 0021).
+            - name: reports
+              containerPort: 8081
+          # git and ripgrep over large clones besides pi. The limit keeps a runaway search from starving the node.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: config
+              mountPath: /agent/web-research.json
+              subPath: web-research.json
+              readOnly: true
+            - name: config
+              mountPath: /agent/repositories.json
+              subPath: repositories.json
+              readOnly: true
+      volumes:
+        - name: agent-dir
+          configMap:
+            name: deep-researcher-agent-dir
+        - name: config
+          configMap:
+            name: deep-researcher-config

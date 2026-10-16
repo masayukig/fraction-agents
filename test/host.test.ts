@@ -1,133 +1,34 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { A2A_AUDIENCE, type TokenReviewer } from "../src/auth.ts";
-import { parseConfig, type Config } from "../src/config.ts";
-import { createHost, type Host } from "../src/host.ts";
+import type { Config } from "../src/config.ts";
 import { MAX_REQUEST_BYTES } from "../src/inbox.ts";
 import { REPLY_EXTENSION_URI } from "../src/reply.ts";
 import { PI_BASE_ENV } from "../src/sessions.ts";
+import {
+  answer,
+  CLAUDE,
+  FAKE_HOOK,
+  makeConfig,
+  message,
+  OWNER,
+  post,
+  resultText,
+  rpc,
+  send,
+  spawns,
+  start,
+  statusText,
+  stop,
+  tempDir,
+  waitForState,
+  waitForTask,
+  type Json,
+} from "./fixtures/host-harness.ts";
 import { IMAGES } from "./fixtures/images.ts";
-
-const OWNER = "system:serviceaccount:fraction-agents:owner";
-const CLAUDE = "system:serviceaccount:fraction-agents:claude";
-const STRANGER = "system:serviceaccount:default:stranger";
-const FAKE_PI = resolve(import.meta.dirname, "fixtures/fake-pi.ts");
-const FAKE_HOOK = resolve(import.meta.dirname, "fixtures/fake-hook.ts");
-
-const reviewer: TokenReviewer = {
-  async review(token) {
-    const users: Record<string, string> = { owner: OWNER, claude: CLAUDE, stranger: STRANGER };
-    if (token === "apiserver") {
-      return { authenticated: true, username: OWNER, audiences: ["https://kubernetes.default.svc"] };
-    }
-    const username = users[token];
-    return username ? { authenticated: true, username, audiences: [A2A_AUDIENCE] } : { authenticated: false };
-  },
-};
-
-type Json = any;
-
-interface Running {
-  host: Host;
-  url: string;
-  config: Config;
-}
-
-const running: Host[] = [];
-
-afterEach(async () => {
-  while (running.length > 0) await running.pop()!.close();
-});
-
-function makeConfig(dir: string, overrides: Record<string, unknown> = {}): Config {
-  mkdirSync(join(dir, "agent"), { recursive: true });
-  return parseConfig({
-    name: "test-agent",
-    description: "An agent for tests.",
-    agentDir: join(dir, "agent"),
-    dataDir: join(dir, "data"),
-    allowedCallers: [OWNER, CLAUDE],
-    publicUrl: "https://agents.example.test/test-agent",
-    piCommand: [process.execPath, FAKE_PI],
-    skills: [{ id: "echo", name: "Echo", description: "Echoes the request." }],
-    ...overrides,
-  });
-}
-
-async function start(config: Config, now?: () => number): Promise<Running> {
-  const host = createHost({ config, tokenReviewer: reviewer, ...(now ? { now } : {}) });
-  running.push(host);
-  const url = await host.listen(0, "127.0.0.1");
-  return { host, url, config };
-}
-
-async function post(
-  url: string,
-  token: string | undefined,
-  method: string,
-  params: Json,
-  extraHeaders: Record<string, string> = {},
-): Promise<{ status: number; body: Json; headers: Headers }> {
-  const headers: Record<string, string> = { "content-type": "application/json", "a2a-version": "1.0", ...extraHeaders };
-  if (token) headers.authorization = `Bearer ${token}`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  const text = await response.text();
-  return { status: response.status, body: text ? JSON.parse(text) : undefined, headers: response.headers };
-}
-
-async function rpc(url: string, token: string, method: string, params: Json): Promise<Json> {
-  const { status, body } = await post(url, token, method, params);
-  assert.equal(status, 200, JSON.stringify(body));
-  return body;
-}
-
-function message(text: string, extra: Record<string, unknown> = {}): Json {
-  return { messageId: crypto.randomUUID(), role: "ROLE_USER", parts: [{ text }], ...extra };
-}
-
-async function send(url: string, token: string, text: string, extra: Record<string, unknown> = {}): Promise<Json> {
-  const body = await rpc(url, token, "SendMessage", { message: message(text, extra), configuration: { returnImmediately: true } });
-  assert.equal(body.error, undefined, JSON.stringify(body.error));
-  return body.result.task;
-}
-
-const TERMINAL = new Set(["TASK_STATE_COMPLETED", "TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"]);
-
-async function waitForTask(url: string, token: string, id: string): Promise<Json> {
-  for (let i = 0; i < 200; i++) {
-    const body = await rpc(url, token, "GetTask", { id });
-    assert.equal(body.error, undefined, JSON.stringify(body.error));
-    if (TERMINAL.has(body.result.status.state)) return body.result;
-    await sleep(25);
-  }
-  throw new Error(`task ${id} did not finish`);
-}
-
-function resultText(task: Json): string {
-  return task.artifacts?.[0]?.parts?.[0]?.text;
-}
-
-function statusText(task: Json): string {
-  return task.status?.message?.parts?.[0]?.text ?? "";
-}
-
-function spawns(config: Config): string[] {
-  const log = join(config.workDir, "spawns.log");
-  return existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : [];
-}
-
-function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "fraction-agents-host-"));
-}
 
 describe("agent card", () => {
   it("is served without credentials and describes the agent from the config", async () => {
@@ -366,8 +267,7 @@ describe("tasks and contexts", () => {
     const first = await start(config);
     const task = await send(first.url, "owner", "one");
     await waitForTask(first.url, "owner", task.id);
-    await first.host.close();
-    running.splice(running.indexOf(first.host), 1);
+    await stop(first.host);
 
     const second = await start(config);
     const again = await rpc(second.url, "owner", "GetTask", { id: task.id });
@@ -696,24 +596,6 @@ describe("files from the caller", () => {
   });
 });
 
-async function waitForState(url: string, token: string, id: string, state: string): Promise<Json> {
-  for (let i = 0; i < 200; i++) {
-    const body = await rpc(url, token, "GetTask", { id });
-    assert.equal(body.error, undefined, JSON.stringify(body.error));
-    if (body.result.status.state === state) return body.result;
-    assert.equal(TERMINAL.has(body.result.status.state), false, `task ended as ${body.result.status.state}`);
-    await sleep(25);
-  }
-  throw new Error(`task ${id} did not reach ${state}`);
-}
-
-async function answer(url: string, token: string, task: Json, text: string): Promise<Json> {
-  return rpc(url, token, "SendMessage", {
-    message: message(text, { contextId: task.contextId, taskId: task.id }),
-    configuration: { returnImmediately: true },
-  });
-}
-
 describe("asking the caller", () => {
   it("puts the task in INPUT_REQUIRED with the question and continues it with the caller's answer", async () => {
     const { url, config } = await start(makeConfig(tempDir()));
@@ -821,8 +703,7 @@ describe("asking the caller", () => {
     const first = await start(config);
     const task = await send(first.url, "owner", "ask:Which page?");
     await waitForState(first.url, "owner", task.id, "TASK_STATE_INPUT_REQUIRED");
-    await first.host.close();
-    running.splice(running.indexOf(first.host), 1);
+    await stop(first.host);
     const second = await start(config);
     const again = await rpc(second.url, "owner", "GetTask", { id: task.id });
     assert.equal(again.result.status.state, "TASK_STATE_FAILED");
@@ -944,8 +825,7 @@ describe("image artifacts", () => {
     const first = await start(config);
     const task = await send(first.url, "owner", "images:png");
     const id = artifactId(imageArtifacts(await waitForTask(first.url, "owner", task.id))[0]);
-    await first.host.close();
-    running.splice(running.indexOf(first.host), 1);
+    await stop(first.host);
     const second = await start(config);
     assert.equal((await download(second.url, "owner", id)).status, 200);
   });

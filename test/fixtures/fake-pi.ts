@@ -32,6 +32,11 @@ function describeAnswer(response: { value?: string; confirmed?: boolean; cancell
 }
 let pending: NodeJS.Timeout | undefined;
 let finishPending: (() => void) | undefined;
+/** What the running prompt does with a steering message, if it heeds them. */
+let onSteer: ((message: string) => void) | undefined;
+
+/** The note the host adds to a prompt when tasks have a time limit. Logged with the prompt, then left out. */
+const HOST_NOTE = /\n\n\[fraction-agents host\][\s\S]*$/;
 
 function emit(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -51,8 +56,12 @@ function assistant(text: string, stopReason = "stop", errorMessage?: string): Re
   return { role: "assistant", content: [{ type: "text", text }], stopReason, ...(errorMessage ? { errorMessage } : {}) };
 }
 
-function prompt(message: string): void {
+function prompt(raw: string): void {
   aborted = false;
+  onSteer = undefined;
+  // Every prompt, in the order they start, with the host's note as it came.
+  appendFileSync("prompts.log", `${JSON.stringify(raw)}\n`);
+  const message = raw.replace(HOST_NOTE, "");
   appendFileSync(sessionFile!, `${JSON.stringify({ role: "user", message })}\n`);
   emit({ type: "agent_start" });
   if (message === "crash") {
@@ -149,6 +158,27 @@ function prompt(message: string): void {
     settle(assistant("submitted"));
     return;
   }
+  // "slow-reply:<json>" works until it is steered, then hands the JSON over as its reply and finishes.
+  // "reply-then-wait:<json>" hands the JSON over at once, then works until it is aborted, steered or not.
+  const slow = /^(slow-reply|reply-then-wait):(.*)$/s.exec(message);
+  if (slow) {
+    const file = process.env.FRACTION_AGENTS_REPLY_FILE!;
+    mkdirSync(dirname(file), { recursive: true });
+    if (slow[1] === "reply-then-wait") writeFileSync(file, slow[2]!);
+    else {
+      onSteer = () => {
+        onSteer = undefined;
+        clearTimeout(pending);
+        pending = undefined;
+        finishPending = undefined;
+        writeFileSync(file, slow[2]!);
+        settle(assistant("wrapped up"));
+      };
+    }
+    finishPending = () => settle(assistant("", "aborted"));
+    pending = setTimeout(() => undefined, 3_600_000);
+    return;
+  }
   const wait = /^wait:(\d+)$/.exec(message);
   if (wait) {
     finishPending = () => settle(assistant("", "aborted"));
@@ -201,6 +231,11 @@ process.stdin.on("data", (chunk: string) => {
           finishPending = undefined;
         }
         respond();
+        break;
+      case "steer":
+        appendFileSync("steers.log", `${JSON.stringify(command.message)}\n`);
+        respond({ disposition: "queued" });
+        onSteer?.(command.message ?? "");
         break;
       case "get_state":
         respond({ sessionFile, isStreaming: false, aborted });

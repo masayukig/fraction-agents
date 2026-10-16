@@ -25,6 +25,10 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0016. Gmail Agent: 本人の OAuth で Gmail を読み取り専用で読み、毎朝の一次選別をなつみに返す](docs/adr/0016-gmail-agent.md)
 - [0017. ニュース係: 情報源を定期的に取り込んで貯め、依頼の関心に沿って一次選別して返す](docs/adr/0017-news-agent.md)
 - [0018. 依存の更新は Renovate に追わせ、公開から 7 日経った版だけを受け取る](docs/adr/0018-dependency-updates-with-renovate.md)
+- [0019. 汎用ホストに、1 回の依頼の時間の上限と、係全体の同時実行の上限を足す](docs/adr/0019-task-time-limit-and-concurrency.md)
+- [0020. 返事をレポートとして汎用ホストが保存し、Markdown と HTML で取らせる](docs/adr/0020-reports-saved-by-the-host.md)
+- [0021. 人がレポートを見るページは A2A とは別の listener で出し、gated のアサーションで確かめる](docs/adr/0021-human-report-pages-behind-gated.md)
+- [0022. deep research の係（deep-researcher）: ウェブと public のリポジトリを読み、実行せずにレポートにする](docs/adr/0022-deep-researcher.md)
 - [0019. 呼び出し元が送るファイルは、バイトの part で受け、context の作業ディレクトリの inbox/ に置く](docs/adr/0019-receive-files-into-the-working-directory.md)
 
 ## 汎用ホスト
@@ -79,6 +83,17 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 | `inputTimeoutSeconds` | | `86400`（1 日） | 質問への答えを待つ秒数。過ぎたら質問を取り下げ、Task を `FAILED` にする |
 | `artifactRetentionSeconds` | | `604800`（7 日） | 画像の成果物を返し続ける秒数。作ってから数え、過ぎたら 404 にして消す |
 | `contextWorkspace` | | なし | context ごとの作業ディレクトリを用意するコマンド。`prepare`（必須）と `remove` の 2 つで、どちらもコマンドの配列 |
+| `taskTimeLimitSeconds` | | なし（上限なし） | 1 回の依頼が働いてよい秒数。順番待ちと答え待ちの時間は数えない（下の「時間の上限」） |
+| `taskTimeLimitGraceSeconds` | | `300`（5 分） | 時間の上限を告げてから、prompt を止めるまでの猶予の秒数 |
+| `maxConcurrentTasks` | | なし（上限なし） | 係全体で同時に働く依頼の数。超えた依頼は `SUBMITTED` のまま順番を待つ（下の「同時に働く依頼の数」） |
+| `reports` | | なし | 返事をレポートとして残す（下の「レポート」）。`{}` で有効になる |
+| `reports.dir` | | `<dataDir>/reports` | レポートの置き場。絶対パス。backup はこのディレクトリだけを取ればよい |
+| `reports.web` | | なし | 人用のページの listener（下の「人用のページ」）。書くなら次の項目はすべて必須 |
+| `reports.web.port` | 必須 | | 人用の listener のポート。`port` とは別にする |
+| `reports.web.publicUrl` | 必須 | | 人から見た人用のページの URL。返事に足す URL と、アサーションの `aud` と比べるホスト名に使う |
+| `reports.web.gated.issuer` | 必須 | | 受け付けるアサーションの発行元（gated の中央認証ホストの origin） |
+| `reports.web.gated.jwksUrl` | 必須 | | gated の公開鍵の JWKS の URL |
+| `reports.web.allowedSubjects` | 必須 | | 見てよい主体の並び（例 `github:<login>`）。gated の NetworkRole と同じ主体を書く |
 
 例:
 
@@ -226,6 +241,103 @@ a2a send -a https://agents.example.test/web-researcher/ -o json \
   "今日の東京の天気"
 ```
 
+### 時間の上限
+
+設定の `taskTimeLimitSeconds` を書くと、1 回の依頼が働いてよい時間に上限が付く（ADR 0019）。書かなければ上限は無い。
+
+- 数えるのは依頼が `WORKING` の時間だけで、順番を待つ時間と、聞き返しの答えを待つ時間は数えない。
+- 上限があると、ホストは prompt の末尾に、上限の長さと数え始めた時刻を書いた決まった注記（`[fraction-agents host] …`）を足す。
+  モデルはこれと `date` で残りの時間を知る。依頼の文で「15 分で」のように短くするのは、モデルの側で行う。
+- 上限に来たら、ホストは走っている pi に、ここまでの結果で返事を出して終えるよう決まった文で告げる（Pi の RPC の `steer`）。
+  - 猶予（`taskTimeLimitGraceSeconds`）のうちに終われば、その結果で `COMPLETED` にする。
+  - 猶予を過ぎたら prompt を止め、それでも `COMPLETED` にする。返事が出ていればその返事を、出ていなければ、時間の上限で止めたことと同じ context で続けられることを書いた決まった文を返す。
+- どちらの終わり方でも、状態のメッセージに、時間の上限に来て途中までを返したことを書く。返事の中身はホストが書き換えない。
+- 続きは、同じ contextId で「続けて」と送れば、途中までの経過を覚えたまま続く。
+
+### 同時に働く依頼の数
+
+設定の `maxConcurrentTasks` を書くと、係全体で同時に働く依頼の数に上限が付く（ADR 0019）。書かなければ上限は無い。
+
+- 上限を超えた依頼は断らず、`SUBMITTED` のまま来た順に待たせる。呼び出し元は `a2a task get --wait` で待てばよい。
+- 待っている依頼もその context を塞ぐ。同じ context に次の依頼を送ると `REJECTED` になる。
+- 待っている依頼を CancelTask で止めると、走らせずに `CANCELED` にする。
+- 聞き返しの答えを待っている依頼は、枠を手放す。答えが届くと `SUBMITTED` に戻り、新しい依頼より先に枠を受け取って続く。
+- 待ちの列はメモリにだけある。ホストを再起動すると、待っていた依頼も走っていた依頼と同じく `FAILED` になる。
+
+### レポート
+
+設定に `reports` を書くと、ホストは返事をレポートとして残す（ADR 0020）。
+
+- `COMPLETED` になった Task で返事（`submit_reply`）が出ていれば、その返事を Markdown にした文を 1 つのレポートにする。
+  ID はその Task の taskId、持ち主はその Task を送った呼び出し元、題は返事の `summary` の 1 行目（120 文字で切る）である。
+  - 時間の上限で途中までを返した Task もレポートにし、先頭に決まった注記を足して、途中までであることを記録する。
+  - 返事が出なかった Task、`FAILED`・`CANCELED` の Task はレポートにしない。
+- レポートは `reports.dir` に、本文（`<ID>.md`）と記録（`<ID>.json`）の 2 つのファイルで置く。
+  一時ファイルに書いて置き換え、本文を先に書くので、書きかけは見えない。期限で消すことはしない。
+  - backup はこのディレクトリだけを取ればよい。戻すときは、ディレクトリを写し戻してホストを起動し直す。
+  - context が保持期間で消えても、レポートは残る。
+
+A2A と同じ listener、同じ token で、次の口を出す。token が無い・違うときは 401、許していない ServiceAccount は 403 である。
+返す・消すのは持ち主にだけで、他の呼び出し元のレポートと知らない ID には 404 を返す。応答には `Cache-Control: private, no-store` と `X-Content-Type-Options: nosniff` を付ける。
+
+| 口 | 中身 |
+|---|---|
+| `GET /reports` | 自分が持ち主のレポートの一覧。新しい順で、`reports` の各要素は `id`・`title`・`createdAt`（ISO 8601）・`partial` |
+| `GET /reports/<ID>.md` | 本文の Markdown（`text/markdown; charset=utf-8`） |
+| `GET /reports/<ID>.html` | 本文を HTML にしたもの |
+| `DELETE /reports/<ID>` | レポートを消す。消せたら 204。Task の記録は残る |
+
+HTML は取られるたびにホストが決まった型で作る。モデルは HTML を書かない。
+
+- 題・作った時刻（ホストの `TZ`）・依頼した呼び出し元・途中までの注記、見出しから作る目次、表、コードのハイライト（ホストの側で色を付ける）を出す。
+- Markdown の中の生の HTML は文として出し、できた HTML をさらに許可リストで無害化する。
+- リンクは `http`・`https`・ページの中の見出しへのものだけを残し、外へのリンクには `rel="noopener noreferrer"` を付ける。画像は読み込まず、画像へのリンクとして出す。
+- CSS を中に持ち、`meta` の Content Security Policy で script と外のものの読み込みを止めた 1 つの文書である。Mermaid の図は文のまま出る（図は人用のページで描く）。
+
+`curl` で取る例:
+
+```bash
+TOKEN=$(cat ~/.config/fraction-agents/tokens/claude)
+curl -fsS -H "Authorization: Bearer $TOKEN" https://agents.example.test/deep-researcher/reports
+curl -fsS -H "Authorization: Bearer $TOKEN" -o report.md https://agents.example.test/deep-researcher/reports/<task-id>.md
+curl -fsS -X DELETE -H "Authorization: Bearer $TOKEN" https://agents.example.test/deep-researcher/reports/<task-id>
+```
+
+### 人用のページ
+
+設定に `reports.web` を書くと、ホストは A2A とは別のポートで、人がブラウザでレポートを読むページを出す（ADR 0021）。
+環境では、このポートを別のホスト名と Ingress で出し、gated の NetworkRole でホスト全体ごと本人だけに開く。
+
+- すべての要求で、ページを返す前に gated の `Gated-Assertion` を 8 段で確かめる（署名は Ed25519、`alg` は `EdDSA` に固定、鍵は設定の JWKS から、`iss`・`aud`・期限・主体）。
+  1〜7 段を満たさなければ 401、主体が `allowedSubjects` に無ければ 403 を返す。本文に理由は書かず、ホストのログに残す。
+  - JWKS は応答のキャッシュの期限に従い、長くても 5 分で取り直す。知らない `kid` は、前に取ってから 1 分以上空いていれば一度だけ取り直す。取れないときは、キャッシュの鍵で確かめ続ける。
+- 見るだけで、`GET` と `HEAD` 以外は 405 を返す。消す口は無い。どの呼び出し元のレポートも見られる。
+
+| 口 | 中身 |
+|---|---|
+| `GET /` | すべてのレポートの一覧。新しい順で、作った時刻・題・依頼した呼び出し元・途中までか。件数の上限とページ送りは無い |
+| `GET /reports/<ID>` | レポートのページ。機械の HTML と同じ型に、Mermaid の図を描く script を足したもの |
+| `GET /reports/<ID>.md` | 本文の Markdown |
+| `GET /assets/mermaid.min.js`、`GET /assets/report.js` | Mermaid と、それを最も厳しい設定（`securityLevel: "strict"`、HTML のラベルなし）で起動する script。image に同梱し、外の CDN から読まない |
+
+すべての応答に、Content Security Policy（既定は何も許さず、script・CSS・画像・フォントは自分の origin だけ、style は inline も許す。`connect-src`・`form-action`・`base-uri` は無し、`frame-ancestors 'none'`）、
+`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Cache-Control: private, no-store`、`Cross-Origin-Opener-Policy: same-origin` を付ける。
+
+`reports.web` があると、ホストはレポートにした Task の返事の最後に「レポート」の節を足し、人用のページの URL（`<reports.web.publicUrl>reports/<ID>`）を書く。
+返事の文と DataPart の両方に入り、レポートの本文には入らない。返事の節がすでに 50 あれば足さない。
+
+### レポートのコマンド
+
+他の呼び出し元のレポートを本人が見る・消すときは、係の Pod に `kubectl exec` で入り、image に同梱したコマンドを使う。
+ホストと同じ設定ファイルを読み、持ち主を問わない。
+
+```bash
+kubectl exec -n fraction-agents deep-researcher-0 -- node /app/dist/src/report-cli.js list
+kubectl exec -n fraction-agents deep-researcher-0 -- node /app/dist/src/report-cli.js delete <task-id>
+```
+
+`list` は 1 行に 1 つのレポートを、ID・作った時刻・依頼した呼び出し元・途中までなら `partial`・題の順にタブで区切って出す。新しい順である。
+
 ### 起動
 
 ビルドして起動する:
@@ -249,6 +361,7 @@ docker build -t fraction-agents-generic-host .
 
 調べもの係の image は、同じ Dockerfile の target `web-researcher` である（`docker build --target web-researcher .`）。汎用ホストの image に Chromium などを足したもので、汎用ホストの image は重くならない。
 ニュース係の image は target `news-agent` で、汎用ホストの image にページを読む Pi パッケージ（`@kvidzibo/pi-web-access`）だけを足したもの。ブラウザは入らない。
+deep research の係の image は target `deep-researcher` で、ページを読む Pi パッケージと、pi の `find` が使う `fd` を足したもの。ブラウザは入らない。
 
 ### 呼び出し方
 
@@ -273,6 +386,7 @@ npm run build
 テストは本物の pi も Kubernetes も使わない。RPC の JSONL を話す偽の pi（`test/fixtures/fake-pi.ts`）と、偽の TokenReview で動かす。
 Pi パッケージのテストは、ローカルの bare repository を GitHub の代わりにし、GitHub の API は偽物かローカルの HTTP サーバーで代える。
 ニュース係のフィードの取得も、偽の fetch かローカルの HTTP サーバーで代え、外へは通信しない。
+deep research の係の clone も、ローカルの bare repository を `file://` で GitHub の代わりにする。
 
 ## エージェントを呼ぶ（呼び出し元の準備）
 
@@ -358,11 +472,18 @@ node skills/fraction-agents/scripts/agent.mjs --list
 node skills/fraction-agents/scripts/agent.mjs wiki-keeper send --async "この記事を取り込んで"
 node skills/fraction-agents/scripts/agent.mjs wiki-keeper task get <task-id> --wait --timeout 5m
 node skills/fraction-agents/scripts/agent.mjs gmail-agent send --async "今日の重要なメールを、仕事の連絡を中心に優先度順で返して"
+node skills/fraction-agents/scripts/agent.mjs deep-researcher report list
+node skills/fraction-agents/scripts/agent.mjs deep-researcher report get <task-id> --format html --output report.html
 ```
 
 - URL と token は、環境変数 `A2ACLI_AGENT_CARD` と `A2ACLI_AUTH` で `a2a` に渡す。コマンド行には出ないので、`ps` やトランスクリプトに token が残らない。
   ほかの引数は、そのまま `a2a` に渡る。`a2a` の出力と終了コードも、そのまま返る。
+- `<名前> report list|get|delete` だけは `a2a` を使わず、補助スクリプトが係のレポートの口（ADR 0020）を直接呼ぶ。
+  URL はエージェントの URL の下の `reports`（例 `https://agents.example.test/deep-researcher/reports`）で、token は `Authorization` のヘッダにだけ載せる。
+  リダイレクトは追わない（token を別の場所へ送らないため）。404 は「無い・他の呼び出し元のもの・レポートを保存しない係」を区別せずに終了コード 1、
+  401・403 は token の発行し直しを促して終了コード 1、届かなければ終了コード 3 で返る。使い方はスキルの「レポートを取る」に書いてある。
 - 補助スクリプトのテスト（`test/skill-agent.test.ts`）は `npm test` で走る。本物の `a2a` の代わりに、起動のされ方を記録する偽の `a2a` を使う。
+  レポートのコマンドは、テストの中に立てたローカルの HTTP サーバーを係の代わりにする。
 
 ## Pi パッケージ
 
@@ -380,6 +501,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | `calendar` | Google Calendar の予定を調べ、登録し、自分で登録した予定だけを変更・削除する道具（ADR 0014）。招待はしない。agentDir に `calendar.json` があるときだけ働く。詳しくは `agents/calendar-keeper/README.md` |
 | `gmail` | Gmail を読み取り専用で検索し、メールと、頼まれたときだけテキストの添付を読む道具（ADR 0016）。agentDir に `gmail.json` があるときだけ働く。本人の認可のコマンドは `bin/gmail-authorize.ts`。詳しくは `agents/gmail-agent/README.md` |
 | `news` | ニュース係の収集係が取り込んだ記事を、取り込んだ時刻で引く道具 `news_articles` と、情報源の状態を見る `news_sources`（ADR 0017）。agentDir に `news.json` があるときだけ働く。収集係のコマンドは `bin/news-collect.ts`。詳しくは `agents/news-agent/README.md` |
+| `repositories` | public の GitHub のリポジトリを資格情報なしで clone する `clone_repository`、履歴を決まった形で読む `git_log`・`git_show`・`git_blame`、`bash` の無い係が時刻を見る `current_time`、pi の `read`・`grep`・`find`・`ls` を context の作業領域の中に閉じる判定と、`bash`・`edit`・`write` の遮断（ADR 0022）。agentDir に `repositories.json` があるときだけ働く。詳しくは `agents/deep-researcher/README.md` |
 
 ### 画像を添える
 
@@ -519,6 +641,13 @@ Pod の中の収集係（別のコンテナ）が、`news.json` の情報源（R
 依頼の末尾の「前回の受け取り」の行があればその時刻より後、無ければ直近 24 時間とする。
 ページを読む Pi パッケージを足した別の image（`ghcr.io/yuanying/fraction-agents-news-agent`）で動く。詳しくは `agents/news-agent/README.md`。
 
+## deep research の係
+
+`agents/deep-researcher/` に、deep research の係の agentDir の中身の雛形と、汎用ホストの設定の例を置く（ADR 0022）。
+頼まれたことを、ウェブと public の GitHub のリポジトリを読んで時間をかけて調べ、出典の付いたレポートにして返す。
+リポジトリは clone して読むだけで、実行しない。1 回の依頼は最長 60 分、同時に走るのは 1 件まで（ADR 0019）。返事はレポートとして保存する（ADR 0020）。
+ページを読む Pi パッケージを足した別の image（`ghcr.io/yuanying/fraction-agents-deep-researcher`）で動く。詳しくは `agents/deep-researcher/README.md`。
+
 ## 「前回の受け取り」の行
 
 決まった時刻に自動で送られる依頼（なつみの郵便ポストの定期便）は、本文の末尾に
@@ -531,7 +660,7 @@ Pod の中の収集係（別のコンテナ）が、`news.json` の情報源（R
 | ニュース係 | その時刻より後に取り込んだ記事から選ぶ。行が無ければ直近 24 時間 |
 | Gmail 係 | 本文に期間が無ければ、その時刻より後に届いたメールを対象にする。行が無ければ直近 7 日 |
 | カレンダー係 | 期間は本文で決め、行は使わない。予定がいつ追加・変更されたかは見分けられない |
-| 調べもの係・Wiki 管理人 | 使わない。本文が「前回から後の」ものを頼んだときだけ基準にする |
+| 調べもの係・deep research の係・Wiki 管理人 | 使わない。本文が「前回から後の」ものを頼んだときだけ基準にする |
 
 各係の Agent Card の説明と AGENTS.md にも、同じ扱いを書いてある。
 
@@ -602,6 +731,16 @@ Pod の中のパス:
 - 収集係のコンテナ `collector` を足す。同じ image で `bin/news-collect.ts` を動かし、PVC の `data/` を `/data` にマウントして、
   記事のストアを `/data/news` に置く。
 - Secret は無い。情報源は `news.json` で渡す。
+
+deep research の係（`deploy/agents/deep-researcher`）も同じ形で、次が違う。
+
+- 名前は `deep-researcher`（PVC は `data-deep-researcher-0`）。ConfigMap は `deep-researcher-agent-dir`（`AGENTS.md`・`settings.json`）と
+  `deep-researcher-config`（`config.json`・`web-research.json`・`repositories.json`）。後の 2 つは `/agent/` の下に差し込む。
+- image は `ghcr.io/yuanying/fraction-agents-deep-researcher`。overlay はこの名前で tag を決める。
+- PVC を 20Gi にする。レポート（`/data/reports`）と、context ごとの clone（`/data/work/<contextId>/repos`）が載る。
+- 人用のページ（ADR 0021）のポート `reports`（8081）を、コンテナと Service に足す。`config.json` の `reports.web.port` と合わせる。
+  このポートを出す Ingress（別のホスト名、gated の NetworkRole）は overlay に書く。
+- Secret は無い。SearXNG の URL は `web-research.json`、clone の上限は `repositories.json` で渡す。
 
 Gmail 係（`deploy/agents/gmail-agent`）も同じ形で、次が違う。
 
@@ -711,5 +850,6 @@ kubectl exec -it -n fraction-agents wiki-keeper-0 -- env PI_CODING_AGENT_DIR=/ag
 
 tag `v<版>` を push すると、GitHub Actions が `ghcr.io/yuanying/fraction-agents:<版>`（`v` を除いた版）と、
 調べもの係の `ghcr.io/yuanying/fraction-agents-web-researcher:<版>`（Dockerfile の target `web-researcher`）と、
-ニュース係の `ghcr.io/yuanying/fraction-agents-news-agent:<版>`（target `news-agent`）を build して push する。
+ニュース係の `ghcr.io/yuanying/fraction-agents-news-agent:<版>`（target `news-agent`）と、
+deep research の係の `ghcr.io/yuanying/fraction-agents-deep-researcher:<版>`（target `deep-researcher`）を build して push する。
 PR では build だけを確かめる。初めて push した package は private で作られるので、GitHub の画面で public にする。

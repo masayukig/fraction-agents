@@ -1,7 +1,8 @@
 # The images: the generic host (ghcr.io/yuanying/fraction-agents), the web researcher's, which adds a browser
 # (ghcr.io/yuanying/fraction-agents-web-researcher, the Dockerfile's web-researcher target), and the news agent's,
-# which adds the page reader (ghcr.io/yuanying/fraction-agents-news-agent, the news-agent target). A tag v<version>
-# pushes all of them as <version>; a pull request only builds them.
+# which adds the page reader (ghcr.io/yuanying/fraction-agents-news-agent, the news-agent target), and the deep
+# researcher's, which adds the page reader and fd (ghcr.io/yuanying/fraction-agents-deep-researcher, the
+# deep-researcher target). A tag v<version> pushes all of them as <version>; a pull request only builds them.
 name: image
 
 on:
@@ -24,11 +25,13 @@ jobs:
             target: web-researcher
           - image: fraction-agents-news-agent
             target: news-agent
+          - image: fraction-agents-deep-researcher
+            target: deep-researcher
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Name the image
         id: name
         env:
@@ -40,14 +43,14 @@ jobs:
           else
             echo "tag=${IMAGE}:pr" >> "$GITHUB_OUTPUT"
           fi
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         if: github.event_name == 'push'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           target: ${{ matrix.target }}

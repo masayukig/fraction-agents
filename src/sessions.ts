@@ -118,6 +118,7 @@ interface Entry {
 export class PiSessions {
   readonly #options: PiSessionsOptions;
   readonly #entries = new Map<string, Entry>();
+  #closed = false;
 
   constructor(options: PiSessionsOptions) {
     this.#options = options;
@@ -133,11 +134,19 @@ export class PiSessions {
   }
 
   /**
-   * Runs one prompt in the context's pi process. The files the caller sent are saved in the context's working
-   * directory once it is prepared, and the prompt ends with a note of where they are (ADR 0019). Returns
-   * `undefined` at once, without running anything, if another task is running in the context.
+   * Runs one prompt in the context's pi process. Returns `undefined` at once, without running anything, if another
+   * task is running (or waiting to) in the context. The context is the task's from here on; the prompt starts once
+   * `turn` is granted, and settles as aborted without starting when it is not. The files the caller sent are saved in
+   * the context's working directory once the prompt starts and the directory is prepared, and the prompt ends with a
+   * note of where they are (ADR 0019).
    */
-  run(target: SessionTarget, taskId: string, text: string, files: readonly InboundFile[] = []): PromptRun | undefined {
+  run(
+    target: SessionTarget,
+    taskId: string,
+    text: string,
+    files: readonly InboundFile[] = [],
+    turn: Promise<boolean> = Promise.resolve(true),
+  ): PromptRun | undefined {
     let entry = this.#entries.get(target.contextId);
     if (entry?.taskId !== undefined) return undefined;
     if (!entry) {
@@ -150,11 +159,13 @@ export class PiSessions {
     const current = entry;
     const run = new PromptRun();
     const outcome = async (): Promise<PromptOutcome> => {
+      if (!(await turn) || current.aborted) return { status: "aborted" };
       if (!current.process?.alive) {
         const env = piEnvironment(this.#options, target.caller, target.contextId);
         const prepared = await this.#options.workspaces.prepare(target.contextId, env);
         if (!prepared.ok) return { status: "failed", error: `The context's workspace could not be prepared: ${prepared.error}` };
         if (current.aborted) return { status: "aborted" };
+        if (this.#closed) return { status: "failed", error: "The agent host is shutting down." };
         current.process = this.#start(target, env);
       }
       run.attach(current.process);
@@ -185,14 +196,26 @@ export class PiSessions {
 
   /** Aborts the task if it is running. Returns whether it was. */
   async abort(taskId: string): Promise<boolean> {
-    for (const entry of this.#entries.values()) {
-      if (entry.taskId === taskId) {
-        entry.aborted = true;
-        await entry.process?.abort().catch(() => undefined);
-        return true;
-      }
-    }
-    return false;
+    const entry = this.#entryOf(taskId);
+    if (!entry) return false;
+    entry.aborted = true;
+    await entry.process?.abort().catch(() => undefined);
+    return true;
+  }
+
+  /** Tells the task's running prompt something (a steering message). Returns whether it was delivered to pi. */
+  async steer(taskId: string, message: string): Promise<boolean> {
+    const process_ = this.#entryOf(taskId)?.process;
+    if (!process_?.alive) return false;
+    return process_.steer(message).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  #entryOf(taskId: string): Entry | undefined {
+    for (const entry of this.#entries.values()) if (entry.taskId === taskId) return entry;
+    return undefined;
   }
 
   /** Stops the context's process, if one is running. The session file stays. */
@@ -205,6 +228,7 @@ export class PiSessions {
   }
 
   async close(): Promise<void> {
+    this.#closed = true;
     await Promise.all([...this.#entries.keys()].map((contextId) => this.stop(contextId)));
   }
 

@@ -1,7 +1,7 @@
 {
   "name": "fraction-agents-pi",
   "version": "0.1.0",
-  "description": "Pi extensions for fraction-agents: a GitHub gate (push, pull request and merge tools, and guards on write, edit and bash), a tool that asks the caller, a tool that returns images to the caller, a tool that submits the reply as a summary, sections and sources, web research (search through SearXNG, and a count of unreadable pages), Google Calendar (read events, create events, and change or delete only the events it created), Gmail (read-only search and reading of messages, and of text attachments when asked), and news (the articles a collector takes in from RSS and Atom feeds, listed by the time they were taken in).",
+  "description": "Pi extensions for fraction-agents: a GitHub gate (push, pull request and merge tools, and guards on write, edit and bash), a tool that asks the caller, a tool that returns images to the caller, a tool that submits the reply as a summary, sections and sources, web research (search through SearXNG, and a count of unreadable pages), Google Calendar (read events, create events, and change or delete only the events it created), Gmail (read-only search and reading of messages, and of text attachments when asked), and news (the articles a collector takes in from RSS and Atom feeds, listed by the time they were taken in), and repositories (clone public GitHub repositories without credentials, read their history in fixed shapes, and keep the reading tools inside the workspace).",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -15,7 +15,8 @@
       "./extensions/web-research.ts",
       "./extensions/calendar.ts",
       "./extensions/gmail.ts",
-      "./extensions/news.ts"
+      "./extensions/news.ts",
+      "./extensions/repositories.ts"
     ]
   },
   "peerDependencies": {
