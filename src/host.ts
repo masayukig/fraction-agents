@@ -15,6 +15,7 @@ import { PiAgentExecutor } from "./executor.ts";
 import { ContextGuardHandler } from "./handler.ts";
 import { Replies } from "./reply.ts";
 import { PiSessions, piEnvironment } from "./sessions.ts";
+import { TaskSlots } from "./slots.ts";
 import { openStore } from "./store.ts";
 import { ContextWorkspaces } from "./workspace.ts";
 
@@ -86,6 +87,7 @@ export function createHost(options: HostOptions): Host {
     const removed = await workspaces.remove(contextId, piEnvironment(config, caller, contextId));
     if (!removed.ok) console.error(`context ${contextId}: removing the workspace failed: ${removed.error}`);
   };
+  const slots = new TaskSlots(config.maxConcurrentTasks);
   const executor = new PiAgentExecutor({
     contexts: store.contexts,
     sessions,
@@ -96,6 +98,10 @@ export function createHost(options: HostOptions): Host {
     now,
     inputTimeoutMs: config.inputTimeoutSeconds * 1000,
     failTask: (taskId, caller, reason) => store.tasks.fail(taskId, caller, reason),
+    slots,
+    ...(config.taskTimeLimitSeconds === undefined
+      ? {}
+      : { timeLimit: { limitMs: config.taskTimeLimitSeconds * 1000, graceMs: config.taskTimeLimitGraceSeconds * 1000 } }),
   });
   const requestHandler = new ContextGuardHandler(
     new DefaultRequestHandler(buildAgentCard(config), store.tasks, executor),
@@ -198,6 +204,7 @@ export function createHost(options: HostOptions): Host {
         server.closeAllConnections();
         await closed;
       }
+      slots.close();
       await sessions.close();
       store.close();
     },
