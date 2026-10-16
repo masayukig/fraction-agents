@@ -1,7 +1,8 @@
 # The images: the generic host (ghcr.io/yuanying/fraction-agents), the web researcher's, which adds a browser
 # (ghcr.io/yuanying/fraction-agents-web-researcher, the Dockerfile's web-researcher target), and the news agent's,
-# which adds the page reader (ghcr.io/yuanying/fraction-agents-news-agent, the news-agent target). A tag v<version>
-# pushes all of them as <version>; a pull request only builds them.
+# which adds the page reader (ghcr.io/yuanying/fraction-agents-news-agent, the news-agent target), and the deep
+# researcher's, which adds the page reader and fd (ghcr.io/yuanying/fraction-agents-deep-researcher, the
+# deep-researcher target). A tag v<version> pushes all of them as <version>; a pull request only builds them.
 name: image
 
 on:
@@ -24,6 +25,8 @@ jobs:
             target: web-researcher
           - image: fraction-agents-news-agent
             target: news-agent
+          - image: fraction-agents-deep-researcher
+            target: deep-researcher
     permissions:
       contents: read
       packages: write

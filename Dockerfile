@@ -85,5 +85,21 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 WORKDIR /app
 USER node
 
+# The deep researcher (ADR 0022): the generic host with the Pi package that reads a page, and fd for pi's find tool
+# (git and ripgrep, for the clones and pi's grep, are in the host already). It clones and reads public repositories
+# and never runs them. Built with --target deep-researcher; no browser.
+FROM host AS deep-researcher
+USER root
+# Debian names fd's command fdfind; pi looks for both names, and would otherwise download fd at its first find.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends fd-find \
+  && rm -rf /var/lib/apt/lists/*
+# The version is pinned by the lock. Pi provides the package's peer dependencies (.npmrc: legacy-peer-deps).
+WORKDIR /opt/fraction-agents/deep-researcher
+COPY images/deep-researcher/package.json images/deep-researcher/package-lock.json images/deep-researcher/.npmrc ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+WORKDIR /app
+USER node
+
 # The generic host is the default target.
 FROM host

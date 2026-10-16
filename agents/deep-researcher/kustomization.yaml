@@ -1,0 +1,15 @@
+# The deep researcher's files as ConfigMaps, for deploy/agents/deep-researcher. They are generated here because
+# kustomize reads files only from under a kustomization's own directory.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+  - name: deep-researcher-agent-dir
+    files:
+      - AGENTS.md
+      - settings.json
+  # Made-up values. The environment's overlay replaces the whole ConfigMap (behavior: replace).
+  - name: deep-researcher-config
+    files:
+      - config.json=config.example.json
+      - web-research.json=web-research.example.json
+      - repositories.json=repositories.example.json

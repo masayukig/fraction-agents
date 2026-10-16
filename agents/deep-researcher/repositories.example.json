@@ -1,0 +1,11 @@
+{
+  "clone": {
+    "maxSizeMegabytes": 1024,
+    "maxTotalSizeMegabytes": 3072,
+    "timeoutSeconds": 300
+  },
+  "history": {
+    "timeoutSeconds": 120,
+    "maxOutputCharacters": 40000
+  }
+}

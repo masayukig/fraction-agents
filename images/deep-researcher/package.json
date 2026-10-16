@@ -1,0 +1,9 @@
+{
+  "name": "fraction-agents-deep-researcher-packages",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The third-party Pi package in the deep researcher's image (ADR 0022): fetch_content and get_search_content, the same page reader as the web researcher's. Pi supplies its peer dependencies.",
+  "dependencies": {
+    "@kvidzibo/pi-web-access": "0.1.1"
+  }
+}
