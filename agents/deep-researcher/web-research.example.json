@@ -1,0 +1,7 @@
+{
+  "searxng": {
+    "url": "http://searxng.searxng.svc.cluster.local/search",
+    "timeoutSeconds": 20,
+    "maxResults": 10
+  }
+}

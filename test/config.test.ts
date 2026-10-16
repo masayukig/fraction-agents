@@ -135,4 +135,15 @@ describe("the agents' examples", () => {
       assert.match(readFileSync(join(agentsDir, agent, "AGENTS.md"), "utf8"), /前回の受け取り/, `${agent}'s AGENTS.md`);
     }
   });
+
+  // The deep researcher reads code and never runs it (ADR 0022): pi gives it the reading tools only, and the host
+  // leaves out the tools that run or change things and the one that searches outside (the extensions stop them too).
+  it("give the deep researcher only the reading tools", () => {
+    const config = loadConfig(join(agentsDir, "deep-researcher", "config.example.json"));
+    const excluded = config.piCommand[config.piCommand.indexOf("--exclude-tools") + 1]?.split(",") ?? [];
+    for (const tool of ["bash", "edit", "write", "web_search"]) assert.ok(excluded.includes(tool), tool);
+    const settings = JSON.parse(readFileSync(join(agentsDir, "deep-researcher", "settings.json"), "utf8"));
+    assert.deepEqual(settings.defaultTools, ["read", "grep", "find", "ls"]);
+    assert.ok(config.contextWorkspace, "each context has a workspace of its own for its clones");
+  });
 });

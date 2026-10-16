@@ -1,0 +1,49 @@
+# The deep researcher (ADR 0022) on its own image: the generic host with the page reader and fd. The environment's
+# overlay refers to this directory as a remote base, pinned to a version, and sets the namespace, the image's tag, the
+# StorageClass and the ConfigMap deep-researcher-config (config.json, web-research.json and repositories.json).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - ../../../agents/deep-researcher
+labels:
+  - pairs:
+      app.kubernetes.io/instance: deep-researcher
+    includeSelectors: true
+images:
+  - name: ghcr.io/yuanying/fraction-agents
+    newName: ghcr.io/yuanying/fraction-agents-deep-researcher
+patches:
+  - target: {kind: StatefulSet, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: deep-researcher
+      # The reports (ADR 0020) and the contexts' clones (ADR 0022) are both on this volume.
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 20Gi
+  - target: {kind: Service, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: deep-researcher
+      # The people's report pages (ADR 0021), on a port of their own. The environment exposes it through a host
+      # name and an Ingress of its own, behind gated; the A2A port stays as it is.
+      - op: add
+        path: /spec/ports/-
+        value:
+          name: reports
+          port: 8081
+          targetPort: reports
+  - target: {kind: ServiceAccount, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: deep-researcher
+  - target: {kind: ClusterRoleBinding, name: agent-auth-delegator}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: deep-researcher-auth-delegator
+  - path: statefulset.yaml

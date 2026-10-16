@@ -1,0 +1,33 @@
+{
+  "name": "deep-researcher",
+  "description": "deep research の係。頼まれたことを、ウェブと public の GitHub のリポジトリ（clone してソースと履歴を読む）で時間をかけて調べ、出典の付いたレポートにして返す。コードは読むだけで、インストール・ビルド・テスト・実行はしない（動かさないと分からないことは「未確認」と書く）。private のリポジトリとログインが要るページは読めない。1 回の依頼は最長 60 分で、依頼の文で短くできる（「10 分で」など）。上限に来たら「途中まで」と明記して返すので、続きは同じ context で「続けて」と頼む。続きの返事は前の分も含めた全体になる。同時に走るのは 1 件までで、ほかの依頼は順番を待つ。レポートは保存され、返事の「レポート」の節にブラウザで見る URL が載る。依頼の本文の末尾の「前回の受け取り: <時刻>」の行は使わない（あっても無視する。本文が「前回から後の」ことを頼んでいれば基準にする）。",
+  "skills": [
+    { "id": "research", "name": "調べもの（レポート）", "description": "ウェブを検索してページを読み、出典の URL を付けたレポートにする。", "examples": ["Rust の非同期ランタイムの主なものを比べて、設計の違いをレポートにして"] },
+    { "id": "repository", "name": "リポジトリを読む", "description": "public の GitHub のリポジトリを clone してソースと履歴を読み、仕組みをレポートにする。実行はしない。", "examples": ["https://github.com/example/tool のプラグインの読み込みの仕組みを、ソースから調べて。30 分で"] }
+  ],
+  "publicUrl": "https://agents.example.test/deep-researcher/",
+  "allowedCallers": [
+    "system:serviceaccount:fraction-agents:owner",
+    "system:serviceaccount:fraction-agents:claude",
+    "system:serviceaccount:fraction-agents:natsumi"
+  ],
+  "agentDir": "/agent",
+  "dataDir": "/data",
+  "piCommand": ["pi", "--exclude-tools", "bash,edit,write,web_search,attach_image"],
+  "contextWorkspace": {
+    "prepare": ["mkdir", "-p"]
+  },
+  "taskTimeLimitSeconds": 3600,
+  "maxConcurrentTasks": 1,
+  "reports": {
+    "web": {
+      "port": 8081,
+      "publicUrl": "https://reports.example.test/",
+      "gated": {
+        "issuer": "https://auth.example.test",
+        "jwksUrl": "https://auth.example.test/.well-known/jwks.json"
+      },
+      "allowedSubjects": ["github:example-owner"]
+    }
+  }
+}
