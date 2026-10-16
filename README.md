@@ -25,6 +25,10 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0016. Gmail Agent: 本人の OAuth で Gmail を読み取り専用で読み、毎朝の一次選別をなつみに返す](docs/adr/0016-gmail-agent.md)
 - [0017. ニュース係: 情報源を定期的に取り込んで貯め、依頼の関心に沿って一次選別して返す](docs/adr/0017-news-agent.md)
 - [0018. 依存の更新は Renovate に追わせ、公開から 7 日経った版だけを受け取る](docs/adr/0018-dependency-updates-with-renovate.md)
+- [0019. 汎用ホストに、1 回の依頼の時間の上限と、係全体の同時実行の上限を足す](docs/adr/0019-task-time-limit-and-concurrency.md)
+- [0020. 返事をレポートとして汎用ホストが保存し、Markdown と HTML で取らせる](docs/adr/0020-reports-saved-by-the-host.md)
+- [0021. 人がレポートを見るページは A2A とは別の listener で出し、gated のアサーションで確かめる](docs/adr/0021-human-report-pages-behind-gated.md)
+- [0022. deep research の係（deep-researcher）: ウェブと public のリポジトリを読み、実行せずにレポートにする](docs/adr/0022-deep-researcher.md)
 
 ## 汎用ホスト
 
