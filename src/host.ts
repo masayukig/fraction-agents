@@ -220,7 +220,7 @@ export function createHost(options: HostOptions): Host {
       res.status(204).end();
     });
   }
-  // Read here, after authentication, with room for the files of a message (ADR 0019): the SDK's own parser stops at
+  // Read here, after authentication, with room for the files of a message (ADR 0023): the SDK's own parser stops at
   // 100 KB, and leaves a body that has been read alone. Its errors are answered the way the SDK answers them.
   app.use(express.json({ limit: MAX_REQUEST_BYTES }), (error: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (error instanceof SyntaxError && "body" in error) {

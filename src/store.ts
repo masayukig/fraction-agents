@@ -206,7 +206,7 @@ export class SqliteTaskStore implements TaskStore {
   }
 }
 
-/** The task without the bytes of the files callers sent (ADR 0019). */
+/** The task without the bytes of the files callers sent (ADR 0023). */
 function withoutFileBytes(task: Task): Task {
   return { ...task, history: task.history.map(withoutMessageFileBytes) };
 }

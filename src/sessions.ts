@@ -138,7 +138,7 @@ export class PiSessions {
    * task is running (or waiting to) in the context. The context is the task's from here on; the prompt starts once
    * `turn` is granted, and settles as aborted without starting when it is not. The files the caller sent are saved in
    * the context's working directory once the prompt starts and the directory is prepared, and the prompt ends with a
-   * note of where they are (ADR 0019).
+   * note of where they are (ADR 0023).
    */
   run(
     target: SessionTarget,

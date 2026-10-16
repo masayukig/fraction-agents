@@ -168,7 +168,7 @@ interface Waiting {
  * extension also gets the reply itself as a data part (ADR 0015).
  * When an extension in pi asks a free-form question (`ctx.ui.input`), the task goes to INPUT_REQUIRED with the
  * question; the caller's next message to the same task is the answer, and the same prompt carries on.
- * Files the caller sends with a new task are saved in the context's working directory for pi (ADR 0019); an answer
+ * Files the caller sends with a new task are saved in the context's working directory for pi (ADR 0023); an answer
  * is taken as text only.
  */
 export class PiAgentExecutor implements AgentExecutor {

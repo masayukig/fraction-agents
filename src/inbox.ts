@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import type { Message } from "@a2a-js/sdk";
 
-/** The limits of the files one message brings (ADR 0019). */
+/** The limits of the files one message brings (ADR 0023). */
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_FILES_PER_MESSAGE = 8;
 export const MAX_MESSAGE_FILE_BYTES = 50 * 1024 * 1024;

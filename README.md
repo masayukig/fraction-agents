@@ -29,7 +29,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0020. 返事をレポートとして汎用ホストが保存し、Markdown と HTML で取らせる](docs/adr/0020-reports-saved-by-the-host.md)
 - [0021. 人がレポートを見るページは A2A とは別の listener で出し、gated のアサーションで確かめる](docs/adr/0021-human-report-pages-behind-gated.md)
 - [0022. deep research の係（deep-researcher）: ウェブと public のリポジトリを読み、実行せずにレポートにする](docs/adr/0022-deep-researcher.md)
-- [0019. 呼び出し元が送るファイルは、バイトの part で受け、context の作業ディレクトリの inbox/ に置く](docs/adr/0019-receive-files-into-the-working-directory.md)
+- [0023. 呼び出し元が送るファイルは、バイトの part で受け、context の作業ディレクトリの inbox/ に置く](docs/adr/0023-receive-files-into-the-working-directory.md)
 
 ## 汎用ホスト
 
@@ -206,7 +206,7 @@ curl -fsS -H "Authorization: Bearer $(cat ~/.config/fraction-agents/tokens/claud
 
 ### ファイルを受け取る
 
-呼び出し元は、Task のメッセージにファイルを添えられる（ADR 0019）。
+呼び出し元は、Task のメッセージにファイルを添えられる（ADR 0023）。
 
 - ファイルは、`raw`（バイト。JSON では base64）を持つ Part で送る。`filename` と `mediaType` を添える。
   `url` の Part は取りに行かず、Task を `REJECTED` にする。
