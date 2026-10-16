@@ -23,6 +23,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist/src ./dist/src
 COPY --from=build /app/dist/pi-package ./dist/pi-package
+# Mermaid's browser bundle, which the report pages serve from their own origin (ADR 0021). The package itself is a
+# dev dependency: only this one file is needed.
+COPY --from=build /app/node_modules/mermaid/dist/mermaid.min.js ./dist/assets/mermaid.min.js
 # The fraction-agents Pi package (ADR 0008). Agents load it by this path from their settings, so its version is
 # the image's. Its TypeScript runs as is: pi loads the extensions, and node runs the workspace command.
 COPY pi-package/package.json /opt/fraction-agents/pi-package/package.json

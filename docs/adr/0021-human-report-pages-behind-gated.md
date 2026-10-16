@@ -107,6 +107,14 @@ gated と今のエージェントの口について、調べて分かったこ�
 - `Cross-Origin-Opener-Policy: same-origin`
 - Mermaid は、図の文から HTML を作らない最も厳しい設定で動かす。
 
+### 実装で決めたこと
+
+- JWS の検証は Node の標準の暗号（Ed25519）で書き、ライブラリを足さなかった。`alg` を `EdDSA` に固定するので、JOSE のライブラリが代わりに担うものが少ない。署名は 64 バイトの 1 通りの符号化だけを受け付ける。
+- JWKS が取れなかったときは、キャッシュの鍵で確かめ続け、取り直しは 1 分後まで試さない。
+- 一覧に件数の上限とページ送りは付けない。
+- Mermaid は devDependency にし、image にはブラウザ用の 1 ファイル（`mermaid.min.js`）だけを入れる。起動の script は `securityLevel: "strict"` と HTML のラベルなしで動かす。
+- 人用の listener には、A2A のポートの `/healthz` に当たるものを置かない。Pod の probe は A2A のポートで足りる。
+
 ## Consequences
 
 - 本人は、gated のログインだけでレポートと一覧をブラウザで見られる。Claude などは、今までどおり Bearer で A2A のホスト名から取る。

@@ -11,6 +11,10 @@ const config = loadConfig(values.config ?? process.env.FRACTION_AGENTS_CONFIG ??
 const host = createHost({ config, tokenReviewer: KubernetesTokenReviewer.inCluster() });
 const url = await host.listen(config.port);
 console.log(`${config.name}: listening on ${url}, advertised as ${config.publicUrl}`);
+if (config.reports?.web) {
+  const web = await host.listenWeb(config.reports.web.port);
+  console.log(`${config.name}: serving the report pages on ${web}, published as ${config.reports.web.publicUrl}`);
+}
 
 let closing = false;
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
