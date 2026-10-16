@@ -172,6 +172,15 @@ export class PiRpcProcess {
     this.#child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", id, ...response })}\n`);
   }
 
+  /**
+   * Tells the running prompt something: pi delivers it after the current turn's tool calls, before the next call of
+   * the model.
+   */
+  async steer(message: string): Promise<void> {
+    const response = await this.request({ type: "steer", message });
+    if (!response.success) throw new Error(response.error ?? "pi refused the steering message");
+  }
+
   /** Asks pi to abort the running prompt. The prompt then settles as aborted. */
   async abort(): Promise<void> {
     await this.request({ type: "abort" });

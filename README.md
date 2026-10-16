@@ -82,6 +82,17 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 | `inputTimeoutSeconds` | | `86400`（1 日） | 質問への答えを待つ秒数。過ぎたら質問を取り下げ、Task を `FAILED` にする |
 | `artifactRetentionSeconds` | | `604800`（7 日） | 画像の成果物を返し続ける秒数。作ってから数え、過ぎたら 404 にして消す |
 | `contextWorkspace` | | なし | context ごとの作業ディレクトリを用意するコマンド。`prepare`（必須）と `remove` の 2 つで、どちらもコマンドの配列 |
+| `taskTimeLimitSeconds` | | なし（上限なし） | 1 回の依頼が働いてよい秒数。順番待ちと答え待ちの時間は数えない（下の「時間の上限」） |
+| `taskTimeLimitGraceSeconds` | | `300`（5 分） | 時間の上限を告げてから、prompt を止めるまでの猶予の秒数 |
+| `maxConcurrentTasks` | | なし（上限なし） | 係全体で同時に働く依頼の数。超えた依頼は `SUBMITTED` のまま順番を待つ（下の「同時に働く依頼の数」） |
+| `reports` | | なし | 返事をレポートとして残す（下の「レポート」）。`{}` で有効になる |
+| `reports.dir` | | `<dataDir>/reports` | レポートの置き場。絶対パス。backup はこのディレクトリだけを取ればよい |
+| `reports.web` | | なし | 人用のページの listener（下の「人用のページ」）。書くなら次の項目はすべて必須 |
+| `reports.web.port` | 必須 | | 人用の listener のポート。`port` とは別にする |
+| `reports.web.publicUrl` | 必須 | | 人から見た人用のページの URL。返事に足す URL と、アサーションの `aud` と比べるホスト名に使う |
+| `reports.web.gated.issuer` | 必須 | | 受け付けるアサーションの発行元（gated の中央認証ホストの origin） |
+| `reports.web.gated.jwksUrl` | 必須 | | gated の公開鍵の JWKS の URL |
+| `reports.web.allowedSubjects` | 必須 | | 見てよい主体の並び（例 `github:<login>`）。gated の NetworkRole と同じ主体を書く |
 
 例:
 
@@ -213,6 +224,103 @@ a2a send -a https://agents.example.test/web-researcher/ -o json \
   --svc-param A2A-Extensions=https://github.com/yuanying/fraction-agents/tree/main/docs/extensions/reply/v1 \
   "今日の東京の天気"
 ```
+
+### 時間の上限
+
+設定の `taskTimeLimitSeconds` を書くと、1 回の依頼が働いてよい時間に上限が付く（ADR 0019）。書かなければ上限は無い。
+
+- 数えるのは依頼が `WORKING` の時間だけで、順番を待つ時間と、聞き返しの答えを待つ時間は数えない。
+- 上限があると、ホストは prompt の末尾に、上限の長さと数え始めた時刻を書いた決まった注記（`[fraction-agents host] …`）を足す。
+  モデルはこれと `date` で残りの時間を知る。依頼の文で「15 分で」のように短くするのは、モデルの側で行う。
+- 上限に来たら、ホストは走っている pi に、ここまでの結果で返事を出して終えるよう決まった文で告げる（Pi の RPC の `steer`）。
+  - 猶予（`taskTimeLimitGraceSeconds`）のうちに終われば、その結果で `COMPLETED` にする。
+  - 猶予を過ぎたら prompt を止め、それでも `COMPLETED` にする。返事が出ていればその返事を、出ていなければ、時間の上限で止めたことと同じ context で続けられることを書いた決まった文を返す。
+- どちらの終わり方でも、状態のメッセージに、時間の上限に来て途中までを返したことを書く。返事の中身はホストが書き換えない。
+- 続きは、同じ contextId で「続けて」と送れば、途中までの経過を覚えたまま続く。
+
+### 同時に働く依頼の数
+
+設定の `maxConcurrentTasks` を書くと、係全体で同時に働く依頼の数に上限が付く（ADR 0019）。書かなければ上限は無い。
+
+- 上限を超えた依頼は断らず、`SUBMITTED` のまま来た順に待たせる。呼び出し元は `a2a task get --wait` で待てばよい。
+- 待っている依頼もその context を塞ぐ。同じ context に次の依頼を送ると `REJECTED` になる。
+- 待っている依頼を CancelTask で止めると、走らせずに `CANCELED` にする。
+- 聞き返しの答えを待っている依頼は、枠を手放す。答えが届くと `SUBMITTED` に戻り、新しい依頼より先に枠を受け取って続く。
+- 待ちの列はメモリにだけある。ホストを再起動すると、待っていた依頼も走っていた依頼と同じく `FAILED` になる。
+
+### レポート
+
+設定に `reports` を書くと、ホストは返事をレポートとして残す（ADR 0020）。
+
+- `COMPLETED` になった Task で返事（`submit_reply`）が出ていれば、その返事を Markdown にした文を 1 つのレポートにする。
+  ID はその Task の taskId、持ち主はその Task を送った呼び出し元、題は返事の `summary` の 1 行目（120 文字で切る）である。
+  - 時間の上限で途中までを返した Task もレポートにし、先頭に決まった注記を足して、途中までであることを記録する。
+  - 返事が出なかった Task、`FAILED`・`CANCELED` の Task はレポートにしない。
+- レポートは `reports.dir` に、本文（`<ID>.md`）と記録（`<ID>.json`）の 2 つのファイルで置く。
+  一時ファイルに書いて置き換え、本文を先に書くので、書きかけは見えない。期限で消すことはしない。
+  - backup はこのディレクトリだけを取ればよい。戻すときは、ディレクトリを写し戻してホストを起動し直す。
+  - context が保持期間で消えても、レポートは残る。
+
+A2A と同じ listener、同じ token で、次の口を出す。token が無い・違うときは 401、許していない ServiceAccount は 403 である。
+返す・消すのは持ち主にだけで、他の呼び出し元のレポートと知らない ID には 404 を返す。応答には `Cache-Control: private, no-store` と `X-Content-Type-Options: nosniff` を付ける。
+
+| 口 | 中身 |
+|---|---|
+| `GET /reports` | 自分が持ち主のレポートの一覧。新しい順で、`reports` の各要素は `id`・`title`・`createdAt`（ISO 8601）・`partial` |
+| `GET /reports/<ID>.md` | 本文の Markdown（`text/markdown; charset=utf-8`） |
+| `GET /reports/<ID>.html` | 本文を HTML にしたもの |
+| `DELETE /reports/<ID>` | レポートを消す。消せたら 204。Task の記録は残る |
+
+HTML は取られるたびにホストが決まった型で作る。モデルは HTML を書かない。
+
+- 題・作った時刻（ホストの `TZ`）・依頼した呼び出し元・途中までの注記、見出しから作る目次、表、コードのハイライト（ホストの側で色を付ける）を出す。
+- Markdown の中の生の HTML は文として出し、できた HTML をさらに許可リストで無害化する。
+- リンクは `http`・`https`・ページの中の見出しへのものだけを残し、外へのリンクには `rel="noopener noreferrer"` を付ける。画像は読み込まず、画像へのリンクとして出す。
+- CSS を中に持ち、`meta` の Content Security Policy で script と外のものの読み込みを止めた 1 つの文書である。Mermaid の図は文のまま出る（図は人用のページで描く）。
+
+`curl` で取る例:
+
+```bash
+TOKEN=$(cat ~/.config/fraction-agents/tokens/claude)
+curl -fsS -H "Authorization: Bearer $TOKEN" https://agents.example.test/deep-researcher/reports
+curl -fsS -H "Authorization: Bearer $TOKEN" -o report.md https://agents.example.test/deep-researcher/reports/<task-id>.md
+curl -fsS -X DELETE -H "Authorization: Bearer $TOKEN" https://agents.example.test/deep-researcher/reports/<task-id>
+```
+
+### 人用のページ
+
+設定に `reports.web` を書くと、ホストは A2A とは別のポートで、人がブラウザでレポートを読むページを出す（ADR 0021）。
+環境では、このポートを別のホスト名と Ingress で出し、gated の NetworkRole でホスト全体ごと本人だけに開く。
+
+- すべての要求で、ページを返す前に gated の `Gated-Assertion` を 8 段で確かめる（署名は Ed25519、`alg` は `EdDSA` に固定、鍵は設定の JWKS から、`iss`・`aud`・期限・主体）。
+  1〜7 段を満たさなければ 401、主体が `allowedSubjects` に無ければ 403 を返す。本文に理由は書かず、ホストのログに残す。
+  - JWKS は応答のキャッシュの期限に従い、長くても 5 分で取り直す。知らない `kid` は、前に取ってから 1 分以上空いていれば一度だけ取り直す。取れないときは、キャッシュの鍵で確かめ続ける。
+- 見るだけで、`GET` と `HEAD` 以外は 405 を返す。消す口は無い。どの呼び出し元のレポートも見られる。
+
+| 口 | 中身 |
+|---|---|
+| `GET /` | すべてのレポートの一覧。新しい順で、作った時刻・題・依頼した呼び出し元・途中までか。件数の上限とページ送りは無い |
+| `GET /reports/<ID>` | レポートのページ。機械の HTML と同じ型に、Mermaid の図を描く script を足したもの |
+| `GET /reports/<ID>.md` | 本文の Markdown |
+| `GET /assets/mermaid.min.js`、`GET /assets/report.js` | Mermaid と、それを最も厳しい設定（`securityLevel: "strict"`、HTML のラベルなし）で起動する script。image に同梱し、外の CDN から読まない |
+
+すべての応答に、Content Security Policy（既定は何も許さず、script・CSS・画像・フォントは自分の origin だけ、style は inline も許す。`connect-src`・`form-action`・`base-uri` は無し、`frame-ancestors 'none'`）、
+`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Cache-Control: private, no-store`、`Cross-Origin-Opener-Policy: same-origin` を付ける。
+
+`reports.web` があると、ホストはレポートにした Task の返事の最後に「レポート」の節を足し、人用のページの URL（`<reports.web.publicUrl>reports/<ID>`）を書く。
+返事の文と DataPart の両方に入り、レポートの本文には入らない。返事の節がすでに 50 あれば足さない。
+
+### レポートのコマンド
+
+他の呼び出し元のレポートを本人が見る・消すときは、係の Pod に `kubectl exec` で入り、image に同梱したコマンドを使う。
+ホストと同じ設定ファイルを読み、持ち主を問わない。
+
+```bash
+kubectl exec -n fraction-agents deep-researcher-0 -- node /app/dist/src/report-cli.js list
+kubectl exec -n fraction-agents deep-researcher-0 -- node /app/dist/src/report-cli.js delete <task-id>
+```
+
+`list` は 1 行に 1 つのレポートを、ID・作った時刻・依頼した呼び出し元・途中までなら `partial`・題の順にタブで区切って出す。新しい順である。
 
 ### 起動
 
