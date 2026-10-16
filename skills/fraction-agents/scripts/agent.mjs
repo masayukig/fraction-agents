@@ -3,20 +3,31 @@
 //
 //   node agent.mjs --list
 //   node agent.mjs <agent> <a2a arguments...>
+//   node agent.mjs <agent> report list [--json]
+//   node agent.mjs <agent> report get <taskId> [--format md|html] [--output <file>]
+//   node agent.mjs <agent> report delete <taskId>
 //
 // The agent's URL and the caller's token come from a local config file
 // ($FRACTION_AGENTS_CLIENT_CONFIG, else $XDG_CONFIG_HOME/fraction-agents/agents.json,
 // else ~/.config/fraction-agents/agents.json). They reach a2a only through the
 // environment (A2ACLI_AGENT_CARD and A2ACLI_AUTH), never through its command line,
-// and this script never prints the token.
+// and this script never prints the token. The report commands call the agent's
+// report endpoints (ADR 0020) themselves, with the token in the Authorization header.
 
 import { spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const usage = `usage: agent.mjs --list
-       agent.mjs <agent> <a2a arguments...>   e.g. agent.mjs wiki-keeper send --async "..."`;
+       agent.mjs <agent> <a2a arguments...>   e.g. agent.mjs wiki-keeper send --async "..."
+       agent.mjs <agent> report list [--json]
+       agent.mjs <agent> report get <taskId> [--format md|html] [--output <file>]
+       agent.mjs <agent> report delete <taskId>`;
+
+// A report's ID is the taskId of the task it came from. Checked before it goes into a URL path.
+const REPORT_ID = /^[0-9A-Za-z][0-9A-Za-z_-]*$/;
+const REQUEST_TIMEOUT_MS = 60_000;
 
 class UserError extends Error {
   constructor(message, status = 1) {
@@ -96,12 +107,17 @@ function list(config) {
   }
 }
 
-function run(name, args, config) {
+function findAgent(name, config) {
   const agent = config.agents.get(name);
   if (!agent) {
     const known = [...config.agents.keys()].join(", ") || "(none)";
     throw new UserError(`no agent named "${name}" in ${config.path}; known agents: ${known}`);
   }
+  return agent;
+}
+
+function run(name, args, config) {
+  const agent = findAgent(name, config);
   const token = readToken(name, agent, config);
   const child = spawn("a2a", args, {
     stdio: "inherit",
@@ -123,18 +139,138 @@ function run(name, args, config) {
   });
 }
 
-function main(argv) {
+// Reads `report ...` arguments into a command, refusing anything else before the token is read.
+function parseReport(args) {
+  const [action, ...rest] = args;
+  const id = (value) => {
+    if (value === undefined || !REPORT_ID.test(value)) throw new UserError(usage, 2);
+    return value;
+  };
+  if (action === "list") {
+    if (rest.length === 0) return { action, json: false };
+    if (rest.length === 1 && rest[0] === "--json") return { action, json: true };
+    throw new UserError(usage, 2);
+  }
+  if (action === "delete") {
+    if (rest.length !== 1) throw new UserError(usage, 2);
+    return { action, id: id(rest[0]) };
+  }
+  if (action === "get") {
+    const command = { action, id: id(rest[0]), format: "md", output: undefined };
+    for (let i = 1; i < rest.length; i += 2) {
+      const value = rest[i + 1];
+      if (value === undefined) throw new UserError(usage, 2);
+      if (rest[i] === "--format" && (value === "md" || value === "html")) command.format = value;
+      else if (rest[i] === "--output" && value !== "") command.output = value;
+      else throw new UserError(usage, 2);
+    }
+    return command;
+  }
+  throw new UserError(usage, 2);
+}
+
+// The report endpoints sit under the agent's URL, like the A2A endpoint.
+function reportUrl(agent, path) {
+  const base = agent.url.endsWith("/") ? agent.url : `${agent.url}/`;
+  return new URL(path, base);
+}
+
+async function request(name, method, url, token) {
+  let response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${token}` },
+      // A redirect could carry the token somewhere else; the report endpoints never redirect.
+      redirect: "manual",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const reason = error?.cause?.code ?? error?.cause?.message ?? error?.message ?? String(error);
+    throw new UserError(`cannot reach agent "${name}" at ${url.origin}: ${reason}`, 3);
+  }
+  if (response.status === 401 || response.status === 403) {
+    await response.body?.cancel();
+    throw new UserError(
+      `agent "${name}" refused the token (${response.status}): it may have expired, or the agent does not accept this caller. Ask the user to issue a new token.`,
+    );
+  }
+  return response;
+}
+
+async function report(name, command, config) {
+  const agent = findAgent(name, config);
+  const token = readToken(name, agent, config);
+  const unexpected = async (response) => {
+    await response.body?.cancel();
+    return new UserError(`agent "${name}" answered ${response.status} ${response.statusText}`.trimEnd());
+  };
+
+  if (command.action === "list") {
+    const response = await request(name, "GET", reportUrl(agent, "reports"), token);
+    if (response.status === 404) {
+      await response.body?.cancel();
+      throw new UserError(`agent "${name}" does not keep reports`);
+    }
+    if (response.status !== 200) throw await unexpected(response);
+    const body = await response.json();
+    if (command.json) {
+      process.stdout.write(`${JSON.stringify(body, null, 2)}\n`);
+      return;
+    }
+    const reports = Array.isArray(body?.reports) ? body.reports : [];
+    if (reports.length === 0) process.stderr.write(`agent.mjs: agent "${name}" has no reports of yours\n`);
+    for (const r of reports) {
+      process.stdout.write(`${r.id}  ${r.createdAt}  ${r.partial ? "[partial] " : ""}${r.title}\n`);
+    }
+    return;
+  }
+
+  const notFound = `report ${command.id} not found on agent "${name}" (no such task, already deleted, sent by another caller, or the agent does not keep reports)`;
+  if (command.action === "delete") {
+    const response = await request(name, "DELETE", reportUrl(agent, `reports/${command.id}`), token);
+    if (response.status === 404) {
+      await response.body?.cancel();
+      throw new UserError(notFound);
+    }
+    if (response.status !== 204 && response.status !== 200) throw await unexpected(response);
+    await response.body?.cancel();
+    process.stderr.write(`agent.mjs: deleted report ${command.id}\n`);
+    return;
+  }
+
+  const response = await request(name, "GET", reportUrl(agent, `reports/${command.id}.${command.format}`), token);
+  if (response.status === 404) {
+    await response.body?.cancel();
+    throw new UserError(notFound);
+  }
+  if (response.status !== 200) throw await unexpected(response);
+  const text = await response.text();
+  if (command.output === undefined) {
+    process.stdout.write(text);
+    return;
+  }
+  writeFileSync(command.output, text);
+  process.stderr.write(`agent.mjs: wrote report ${command.id} to ${command.output}\n`);
+}
+
+async function main(argv) {
   if (argv[0] === "--list" && argv.length === 1) {
     list(loadConfig());
     return;
   }
   if (argv.length < 2 || argv[0].startsWith("-")) throw new UserError(usage, 2);
   const [name, ...args] = argv;
+  if (args[0] === "report") {
+    const command = parseReport(args.slice(1));
+    await report(name, command, loadConfig());
+    return;
+  }
   run(name, args, loadConfig());
 }
 
 try {
-  main(process.argv.slice(2));
+  await main(process.argv.slice(2));
 } catch (error) {
   if (!(error instanceof UserError)) throw error;
   process.stderr.write(`agent.mjs: ${error.message}\n`);

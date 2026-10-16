@@ -456,11 +456,18 @@ node skills/fraction-agents/scripts/agent.mjs --list
 node skills/fraction-agents/scripts/agent.mjs wiki-keeper send --async "この記事を取り込んで"
 node skills/fraction-agents/scripts/agent.mjs wiki-keeper task get <task-id> --wait --timeout 5m
 node skills/fraction-agents/scripts/agent.mjs gmail-agent send --async "今日の重要なメールを、仕事の連絡を中心に優先度順で返して"
+node skills/fraction-agents/scripts/agent.mjs deep-researcher report list
+node skills/fraction-agents/scripts/agent.mjs deep-researcher report get <task-id> --format html --output report.html
 ```
 
 - URL と token は、環境変数 `A2ACLI_AGENT_CARD` と `A2ACLI_AUTH` で `a2a` に渡す。コマンド行には出ないので、`ps` やトランスクリプトに token が残らない。
   ほかの引数は、そのまま `a2a` に渡る。`a2a` の出力と終了コードも、そのまま返る。
+- `<名前> report list|get|delete` だけは `a2a` を使わず、補助スクリプトが係のレポートの口（ADR 0020）を直接呼ぶ。
+  URL はエージェントの URL の下の `reports`（例 `https://agents.example.test/deep-researcher/reports`）で、token は `Authorization` のヘッダにだけ載せる。
+  リダイレクトは追わない（token を別の場所へ送らないため）。404 は「無い・他の呼び出し元のもの・レポートを保存しない係」を区別せずに終了コード 1、
+  401・403 は token の発行し直しを促して終了コード 1、届かなければ終了コード 3 で返る。使い方はスキルの「レポートを取る」に書いてある。
 - 補助スクリプトのテスト（`test/skill-agent.test.ts`）は `npm test` で走る。本物の `a2a` の代わりに、起動のされ方を記録する偽の `a2a` を使う。
+  レポートのコマンドは、テストの中に立てたローカルの HTTP サーバーを係の代わりにする。
 
 ## Pi パッケージ
 
