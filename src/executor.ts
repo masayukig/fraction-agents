@@ -5,7 +5,7 @@ import { Role, TaskState, type Message, type Part } from "@a2a-js/sdk";
 import { AgentEvent, type AgentExecutor, type ExecutionEventBus, type RequestContext } from "@a2a-js/sdk/server";
 
 import type { Artifacts } from "./artifacts.ts";
-import { REPLY_EXTENSION_URI, renderReply, type Replies } from "./reply.ts";
+import { REPLY_EXTENSION_URI, renderReply, type Replies, type Reply } from "./reply.ts";
 import type { PiSessions, PromptRun } from "./sessions.ts";
 import type { TaskSlots } from "./slots.ts";
 import type { ContextRegistry } from "./store.ts";
@@ -34,7 +34,27 @@ export interface PiAgentExecutorOptions {
   slots: TaskSlots;
   /** No limit when not set. */
   timeLimit?: TimeLimit;
+  /**
+   * Keeps the reply of a completed task as a report (ADR 0020), and returns the URL people read it at, if there are
+   * pages for people. Not set when the agent keeps no reports.
+   */
+  keepReport?: (report: CompletedReply) => string | undefined;
 }
+
+/** A reply a task completed with. */
+export interface CompletedReply {
+  taskId: string;
+  contextId: string;
+  caller: string;
+  reply: Reply;
+  /** Whether the task reached its time limit and returned the work so far. */
+  partial: boolean;
+}
+
+/** The title of the section the host adds to a reply with the report page's URL. */
+export const REPORT_SECTION_TITLE = "レポート";
+/** The reply contract's limit of sections (`reply.schema.json`). */
+const SECTIONS_LIMIT = 50;
 
 const SETTLE_WAIT_MS = 10_000;
 
@@ -338,7 +358,12 @@ export class PiAgentExecutor implements AgentExecutor {
     text: string,
     partial: boolean,
   ): void {
-    const reply = this.#options.replies.take(contextId, taskId);
+    let reply = this.#options.replies.take(contextId, taskId);
+    const link = reply ? this.#options.keepReport?.({ taskId, contextId, caller, reply, partial }) : undefined;
+    // The link goes to the caller as one more section of the reply, when there is room for it.
+    if (reply && link !== undefined && reply.sections.length < SECTIONS_LIMIT) {
+      reply = { ...reply, sections: [...reply.sections, { title: REPORT_SECTION_TITLE, body: link }] };
+    }
     const parts: Part[] = [
       { content: { $case: "text", value: reply ? renderReply(reply) : text }, metadata: {}, filename: "", mediaType: "text/plain" },
     ];
