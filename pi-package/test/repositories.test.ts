@@ -272,7 +272,7 @@ describe("the repositories extension", () => {
     const workspace = tempDir();
     const pi = new FakePi(workspace);
     createRepositories({ env: { PI_CODING_AGENT_DIR: agentDir("{}") }, remote: () => `file://${remote}`, protocols: ["file"] })(pi);
-    assert.deepEqual([...pi.tools.keys()].sort(), ["clone_repository", "git_blame", "git_log", "git_show"]);
+    assert.deepEqual([...pi.tools.keys()].sort(), ["clone_repository", "current_time", "git_blame", "git_log", "git_show"]);
 
     assert.match(await pi.call("clone_repository", { url: "https://github.com/example/tool" }), /repos\/example\/tool/);
     const log = await pi.call("git_log", { repository: "example/tool" });
@@ -295,6 +295,14 @@ describe("the repositories extension", () => {
     for (const tool of ["bash", "edit", "write"]) {
       assert.match((await pi.toolCall(tool, { command: "ls", path: "x" }))?.reason ?? "", /not available/, tool);
     }
+  });
+
+  // The host's time limit note (ADR 0019) says to run date, but this agent has no bash: current_time tells the time.
+  it("tells the time in place of date, and says so when bash is stopped", async () => {
+    const pi = new FakePi(tempDir());
+    createRepositories({ env: { PI_CODING_AGENT_DIR: agentDir("{}") }, now: () => new Date("2026-10-16T03:04:05.678Z") })(pi);
+    assert.match(await pi.call("current_time", {}), /^2026-10-16T03:04:05\.678Z/);
+    assert.match((await pi.toolCall("bash", { command: "date" }))?.reason ?? "", /current_time/);
   });
 
   it("keeps the guards on when its settings are bad, without the tools", async () => {

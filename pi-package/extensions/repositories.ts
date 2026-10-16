@@ -34,6 +34,8 @@ export interface RepositoriesOptions {
   remote?: (owner: string, repo: string) => string;
   /** The protocols git may use. Only https by default. */
   protocols?: readonly string[];
+  /** The clock current_time reads. For tests. */
+  now?: () => Date;
 }
 
 export function createRepositories(options: RepositoriesOptions = {}): (pi: PiApi) => void {
@@ -46,7 +48,10 @@ export function createRepositories(options: RepositoriesOptions = {}): (pi: PiAp
     // tools, and without the guard they would read anywhere, the login in the agent directory included.
     pi.on("tool_call", (event: ToolCallEvent, ctx: ToolContext) => {
       if (BLOCKED_TOOLS.includes(event.toolName)) {
-        return { block: true, reason: `${event.toolName} is not available here. This agent reads code and never runs or changes it.` };
+        return {
+          block: true,
+          reason: `${event.toolName} is not available here. This agent reads code and never runs or changes it. For the time (instead of date), call current_time.`,
+        };
       }
       if (!READING_TOOLS.includes(event.toolName)) return undefined;
       const value = event.input?.path;
@@ -63,6 +68,20 @@ export function createRepositories(options: RepositoriesOptions = {}): (pi: PiAp
       return;
     }
     const protocols = options.protocols;
+    const now = options.now ?? (() => new Date());
+
+    // The host's note on the time limit (ADR 0019) says to run date, which needs bash. This tells the time instead.
+    pi.registerTool({
+      name: "current_time",
+      label: "Current time",
+      description: "The current time, in UTC (ISO 8601). Use it instead of date to see how much of the task's time is left.",
+      promptSnippet: "Tell the current time",
+      promptGuidelines: ["To see the time (the host's note says to run date), call current_time. There is no bash here."],
+      parameters: Type.Object({}),
+      async execute() {
+        return text(now().toISOString());
+      },
+    });
     // One clone at a time, so that two clones cannot both fit the context's total and then exceed it together.
     let clones: Promise<unknown> = Promise.resolve();
 

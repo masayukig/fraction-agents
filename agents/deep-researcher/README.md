@@ -25,6 +25,7 @@
 | `fetch_content`・`get_search_content` | `@kvidzibo/pi-web-access` 0.1.1 | ページを取って Markdown にし、キャッシュから部分を引く |
 | `clone_repository` | fraction-agents の Pi パッケージ（`repositories`） | public の GitHub のリポジトリを、context の作業領域の `repos/<owner>/<repo>` に clone する |
 | `git_log`・`git_show`・`git_blame` | 同上 | clone したリポジトリの履歴を、決まった形の git の操作で読む |
+| `current_time` | 同上 | 今の時刻（UTC）を返す。ホストの時間の上限の注記は `date` で見るよう書くが、この係には `bash` が無いので代わりに使う |
 | `read`・`grep`・`find`・`ls` | pi の組み込み | ファイルを読む。作業領域の外は `repositories` の拡張が止める |
 | `submit_reply` | fraction-agents の Pi パッケージ | 返事を要約・節・出典の形で出す（ADR 0015）。ホストがレポートとして保存する（ADR 0020） |
 | `ask_caller` | 同上 | 呼び出し元に聞き返す |
@@ -70,7 +71,7 @@
 - `path` を省いたとき（`grep`・`find`・`ls`）は作業領域そのものなので、通す。
 
 clone はリンクを作らないので、作業領域の中にリンクはできない。判定とあわせて二重に守る。
-`repositories.json` が読めない（JSON でない、値が正しくない）ときは、clone と履歴の道具を出さないが、この判定と `bash`・`edit`・`write` の遮断は働かせる。
+`repositories.json` が読めない（JSON でない、値が正しくない）ときは、clone・履歴・時刻の道具を出さないが、この判定と `bash`・`edit`・`write` の遮断は働かせる。
 
 ## `repositories.json`
 
@@ -88,14 +89,14 @@ agentDir に置く。秘密は置かない。無いときは、clone と履歴�
 
 ## 汎用ホストの設定
 
-`config.example.json` は、ADR 0019〜0021 の項目を ADR の名前で書いている。
+`config.example.json` は、ADR 0019〜0021 の項目を書いている。猶予（`taskTimeLimitGraceSeconds`）はホストの既定（300 秒）のまま。
 
 | 項目 | 値 | 意味 |
 |---|---|---|
 | `taskTimeLimitSeconds` | `3600` | 1 回の依頼の時間の上限（ADR 0019） |
 | `maxConcurrentTasks` | `1` | 係全体で同時に走る依頼の数（ADR 0019）。2 に上げるのは、Plus の枠と Pod の資源の様子を見てから |
-| `reports` | | レポートを保存する（ADR 0020）。置き場は既定の `<dataDir>/reports` |
-| `reports.web` | | 人用のページ（ADR 0021）。`port` は deploy の `reports` のポート（8081）と合わせる。gated の改修がそろうまで、overlay で Ingress を出さない |
+| `reports` | | レポートを保存する（ADR 0020）。`reports.dir` は書かず、既定の `<dataDir>/reports` に置く |
+| `reports.web` | | 人用のページ（ADR 0021）。`port` は deploy の `reports` のポート（8081）と合わせる。`gated.jwksUrl` は gated の中央認証ホストの `/__gated/jwks.json`。gated の改修がそろうまで、overlay で Ingress を出さない |
 | `contextWorkspace` | `mkdir -p` | context ごとの作業領域。clone はこの中に置き、context と一緒に消える |
 | `piCommand` | | 上の「道具」のとおり、外す道具を `--exclude-tools` で渡す |
 

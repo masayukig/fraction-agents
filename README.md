@@ -478,7 +478,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | `calendar` | Google Calendar の予定を調べ、登録し、自分で登録した予定だけを変更・削除する道具（ADR 0014）。招待はしない。agentDir に `calendar.json` があるときだけ働く。詳しくは `agents/calendar-keeper/README.md` |
 | `gmail` | Gmail を読み取り専用で検索し、メールと、頼まれたときだけテキストの添付を読む道具（ADR 0016）。agentDir に `gmail.json` があるときだけ働く。本人の認可のコマンドは `bin/gmail-authorize.ts`。詳しくは `agents/gmail-agent/README.md` |
 | `news` | ニュース係の収集係が取り込んだ記事を、取り込んだ時刻で引く道具 `news_articles` と、情報源の状態を見る `news_sources`（ADR 0017）。agentDir に `news.json` があるときだけ働く。収集係のコマンドは `bin/news-collect.ts`。詳しくは `agents/news-agent/README.md` |
-| `repositories` | public の GitHub のリポジトリを資格情報なしで clone する `clone_repository`、履歴を決まった形で読む `git_log`・`git_show`・`git_blame`、pi の `read`・`grep`・`find`・`ls` を context の作業領域の中に閉じる判定と、`bash`・`edit`・`write` の遮断（ADR 0022）。agentDir に `repositories.json` があるときだけ働く。詳しくは `agents/deep-researcher/README.md` |
+| `repositories` | public の GitHub のリポジトリを資格情報なしで clone する `clone_repository`、履歴を決まった形で読む `git_log`・`git_show`・`git_blame`、`bash` の無い係が時刻を見る `current_time`、pi の `read`・`grep`・`find`・`ls` を context の作業領域の中に閉じる判定と、`bash`・`edit`・`write` の遮断（ADR 0022）。agentDir に `repositories.json` があるときだけ働く。詳しくは `agents/deep-researcher/README.md` |
 
 ### 画像を添える
 
