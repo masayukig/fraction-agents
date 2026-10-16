@@ -237,6 +237,7 @@ docker build -t fraction-agents-generic-host .
 
 調べもの係の image は、同じ Dockerfile の target `web-researcher` である（`docker build --target web-researcher .`）。汎用ホストの image に Chromium などを足したもので、汎用ホストの image は重くならない。
 ニュース係の image は target `news-agent` で、汎用ホストの image にページを読む Pi パッケージ（`@kvidzibo/pi-web-access`）だけを足したもの。ブラウザは入らない。
+deep research の係の image は target `deep-researcher` で、ページを読む Pi パッケージと、pi の `find` が使う `fd` を足したもの。ブラウザは入らない。
 
 ### 呼び出し方
 
@@ -261,6 +262,7 @@ npm run build
 テストは本物の pi も Kubernetes も使わない。RPC の JSONL を話す偽の pi（`test/fixtures/fake-pi.ts`）と、偽の TokenReview で動かす。
 Pi パッケージのテストは、ローカルの bare repository を GitHub の代わりにし、GitHub の API は偽物かローカルの HTTP サーバーで代える。
 ニュース係のフィードの取得も、偽の fetch かローカルの HTTP サーバーで代え、外へは通信しない。
+deep research の係の clone も、ローカルの bare repository を `file://` で GitHub の代わりにする。
 
 ## エージェントを呼ぶ（呼び出し元の準備）
 
@@ -368,6 +370,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | `calendar` | Google Calendar の予定を調べ、登録し、自分で登録した予定だけを変更・削除する道具（ADR 0014）。招待はしない。agentDir に `calendar.json` があるときだけ働く。詳しくは `agents/calendar-keeper/README.md` |
 | `gmail` | Gmail を読み取り専用で検索し、メールと、頼まれたときだけテキストの添付を読む道具（ADR 0016）。agentDir に `gmail.json` があるときだけ働く。本人の認可のコマンドは `bin/gmail-authorize.ts`。詳しくは `agents/gmail-agent/README.md` |
 | `news` | ニュース係の収集係が取り込んだ記事を、取り込んだ時刻で引く道具 `news_articles` と、情報源の状態を見る `news_sources`（ADR 0017）。agentDir に `news.json` があるときだけ働く。収集係のコマンドは `bin/news-collect.ts`。詳しくは `agents/news-agent/README.md` |
+| `repositories` | public の GitHub のリポジトリを資格情報なしで clone する `clone_repository`、履歴を決まった形で読む `git_log`・`git_show`・`git_blame`、pi の `read`・`grep`・`find`・`ls` を context の作業領域の中に閉じる判定と、`bash`・`edit`・`write` の遮断（ADR 0022）。agentDir に `repositories.json` があるときだけ働く。詳しくは `agents/deep-researcher/README.md` |
 
 ### 画像を添える
 
@@ -507,6 +510,13 @@ Pod の中の収集係（別のコンテナ）が、`news.json` の情報源（R
 依頼の末尾の「前回の受け取り」の行があればその時刻より後、無ければ直近 24 時間とする。
 ページを読む Pi パッケージを足した別の image（`ghcr.io/yuanying/fraction-agents-news-agent`）で動く。詳しくは `agents/news-agent/README.md`。
 
+## deep research の係
+
+`agents/deep-researcher/` に、deep research の係の agentDir の中身の雛形と、汎用ホストの設定の例を置く（ADR 0022）。
+頼まれたことを、ウェブと public の GitHub のリポジトリを読んで時間をかけて調べ、出典の付いたレポートにして返す。
+リポジトリは clone して読むだけで、実行しない。1 回の依頼は最長 60 分、同時に走るのは 1 件まで（ADR 0019）。返事はレポートとして保存する（ADR 0020）。
+ページを読む Pi パッケージを足した別の image（`ghcr.io/yuanying/fraction-agents-deep-researcher`）で動く。詳しくは `agents/deep-researcher/README.md`。
+
 ## 「前回の受け取り」の行
 
 決まった時刻に自動で送られる依頼（なつみの郵便ポストの定期便）は、本文の末尾に
@@ -519,7 +529,7 @@ Pod の中の収集係（別のコンテナ）が、`news.json` の情報源（R
 | ニュース係 | その時刻より後に取り込んだ記事から選ぶ。行が無ければ直近 24 時間 |
 | Gmail 係 | 本文に期間が無ければ、その時刻より後に届いたメールを対象にする。行が無ければ直近 7 日 |
 | カレンダー係 | 期間は本文で決め、行は使わない。予定がいつ追加・変更されたかは見分けられない |
-| 調べもの係・Wiki 管理人 | 使わない。本文が「前回から後の」ものを頼んだときだけ基準にする |
+| 調べもの係・deep research の係・Wiki 管理人 | 使わない。本文が「前回から後の」ものを頼んだときだけ基準にする |
 
 各係の Agent Card の説明と AGENTS.md にも、同じ扱いを書いてある。
 
@@ -590,6 +600,16 @@ Pod の中のパス:
 - 収集係のコンテナ `collector` を足す。同じ image で `bin/news-collect.ts` を動かし、PVC の `data/` を `/data` にマウントして、
   記事のストアを `/data/news` に置く。
 - Secret は無い。情報源は `news.json` で渡す。
+
+deep research の係（`deploy/agents/deep-researcher`）も同じ形で、次が違う。
+
+- 名前は `deep-researcher`（PVC は `data-deep-researcher-0`）。ConfigMap は `deep-researcher-agent-dir`（`AGENTS.md`・`settings.json`）と
+  `deep-researcher-config`（`config.json`・`web-research.json`・`repositories.json`）。後の 2 つは `/agent/` の下に差し込む。
+- image は `ghcr.io/yuanying/fraction-agents-deep-researcher`。overlay はこの名前で tag を決める。
+- PVC を 20Gi にする。レポート（`/data/reports`）と、context ごとの clone（`/data/work/<contextId>/repos`）が載る。
+- 人用のページ（ADR 0021）のポート `reports`（8081）を、コンテナと Service に足す。`config.json` の `reports.web.port` と合わせる。
+  このポートを出す Ingress（別のホスト名、gated の NetworkRole）は overlay に書く。
+- Secret は無い。SearXNG の URL は `web-research.json`、clone の上限は `repositories.json` で渡す。
 
 Gmail 係（`deploy/agents/gmail-agent`）も同じ形で、次が違う。
 
@@ -699,5 +719,6 @@ kubectl exec -it -n fraction-agents wiki-keeper-0 -- env PI_CODING_AGENT_DIR=/ag
 
 tag `v<版>` を push すると、GitHub Actions が `ghcr.io/yuanying/fraction-agents:<版>`（`v` を除いた版）と、
 調べもの係の `ghcr.io/yuanying/fraction-agents-web-researcher:<版>`（Dockerfile の target `web-researcher`）と、
-ニュース係の `ghcr.io/yuanying/fraction-agents-news-agent:<版>`（target `news-agent`）を build して push する。
+ニュース係の `ghcr.io/yuanying/fraction-agents-news-agent:<版>`（target `news-agent`）と、
+deep research の係の `ghcr.io/yuanying/fraction-agents-deep-researcher:<版>`（target `deep-researcher`）を build して push する。
 PR では build だけを確かめる。初めて push した package は private で作られるので、GitHub の画面で public にする。
