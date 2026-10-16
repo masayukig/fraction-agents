@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -270,5 +272,319 @@ describe("skills/fraction-agents/scripts/agent.mjs", () => {
       assert.match(result.stderr, /usage/i);
     }
     assert.ok(!invoked(e));
+  });
+});
+
+// A stand-in for an agent's report endpoints (ADR 0020). It records each request and answers from `respond`.
+interface Seen {
+  method: string;
+  url: string;
+  authorization: string | undefined;
+}
+
+async function reportServer(
+  respond: (req: IncomingMessage, res: ServerResponse) => void,
+): Promise<{ base: string; seen: Seen[]; close: () => Promise<void> }> {
+  const seen: Seen[] = [];
+  const server = createServer((req, res) => {
+    seen.push({ method: req.method ?? "", url: req.url ?? "", authorization: req.headers.authorization });
+    respond(req, res);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    base: `http://127.0.0.1:${port}`,
+    seen,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+const reportId = "0b6c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d";
+
+// The report endpoints as the host serves them, for one report owned by the caller.
+function reportEndpoints(req: IncomingMessage, res: ServerResponse): void {
+  const path = new URL(req.url ?? "/", "http://x").pathname.replace(/^\/deep-researcher/, "");
+  if (req.method === "GET" && path === "/reports") {
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        reports: [
+          { id: reportId, title: "Rust の非同期ランタイムの比較", createdAt: "2026-10-15T01:02:03.000Z", partial: true },
+          { id: "1c7d2e3f-4051-4b6c-9d7e-8f9a0b1c2d3e", title: "前の調べもの", createdAt: "2026-10-14T00:00:00.000Z", partial: false },
+        ],
+      }),
+    );
+    return;
+  }
+  if (req.method === "GET" && path === `/reports/${reportId}.md`) {
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.end("# レポート\n\n本文\n");
+    return;
+  }
+  if (req.method === "GET" && path === `/reports/${reportId}.html`) {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end("<!doctype html><title>レポート</title><p>本文</p>\n");
+    return;
+  }
+  if (req.method === "DELETE" && path === `/reports/${reportId}`) {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+  res.statusCode = 404;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify({ error: "report not found" }));
+}
+
+function reportsConfig(e: Env, url: string): void {
+  writeToken(join(e.configDir, "tokens", "claude"));
+  writeConfig(e, { tokenFile: "tokens/claude", agents: { "deep-researcher": { url } } });
+}
+
+// spawnSync would block the stand-in server in this same process, so the report commands run asynchronously.
+function runAsync(e: Env, args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [script, ...args], { env: e.env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+describe("skills/fraction-agents/scripts/agent.mjs report", () => {
+  it("lists the caller's reports with the token in the Authorization header only", async () => {
+    const server = await reportServer(reportEndpoints);
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      const result = await runAsync(e, ["deep-researcher", "report", "list"]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(server.seen, [{ method: "GET", url: "/reports", authorization: `Bearer ${token}` }]);
+      const lines = result.stdout.trimEnd().split("\n");
+      assert.equal(lines.length, 2);
+      assert.match(lines[0]!, new RegExp(`^${reportId}\\s+2026-10-15T01:02:03.000Z\\s+\\[partial\\] Rust の非同期ランタイムの比較$`));
+      assert.match(lines[1]!, /^1c7d2e3f-4051-4b6c-9d7e-8f9a0b1c2d3e\s+2026-10-14T00:00:00.000Z\s+前の調べもの$/);
+      assert.ok(!result.stdout.includes(token));
+      assert.ok(!result.stderr.includes(token));
+      assert.ok(!invoked(e));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("prints the list as JSON with --json, and says so when there are no reports", async () => {
+    const server = await reportServer(reportEndpoints);
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      const result = await runAsync(e, ["deep-researcher", "report", "list", "--json"]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).reports[0].id, reportId);
+    } finally {
+      await server.close();
+    }
+    const empty = await reportServer((_req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ reports: [] }));
+    });
+    try {
+      const e = setup();
+      reportsConfig(e, `${empty.base}/`);
+      const result = await runAsync(e, ["deep-researcher", "report", "list"]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /no reports/);
+    } finally {
+      await empty.close();
+    }
+  });
+
+  it("gets a report's Markdown to standard output by default", async () => {
+    const server = await reportServer(reportEndpoints);
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      const result = await runAsync(e, ["deep-researcher", "report", "get", reportId]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, "# レポート\n\n本文\n");
+      assert.deepEqual(server.seen, [{ method: "GET", url: `/reports/${reportId}.md`, authorization: `Bearer ${token}` }]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("gets a report's HTML into a file with --output", async () => {
+    const server = await reportServer(reportEndpoints);
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      const output = join(e.home, "report.html");
+      const result = await runAsync(e, ["deep-researcher", "report", "get", reportId, "--format", "html", "--output", output]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.equal(readFileSync(output, "utf8"), "<!doctype html><title>レポート</title><p>本文</p>\n");
+      assert.match(result.stderr, /report\.html/);
+      assert.equal(server.seen[0]!.url, `/reports/${reportId}.html`);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("builds the report URLs under an agent URL with a path", async () => {
+    const server = await reportServer(reportEndpoints);
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/deep-researcher`);
+      const result = await runAsync(e, ["deep-researcher", "report", "get", reportId, "--format", "md"]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(server.seen[0]!.url, `/deep-researcher/reports/${reportId}.md`);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("deletes a report", async () => {
+    const server = await reportServer(reportEndpoints);
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      const result = await runAsync(e, ["deep-researcher", "report", "delete", reportId]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(server.seen, [{ method: "DELETE", url: `/reports/${reportId}`, authorization: `Bearer ${token}` }]);
+      assert.match(result.stderr, /deleted/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("explains a report that is not there, and writes no file", async () => {
+    const server = await reportServer(reportEndpoints);
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      const other = "2d8e3f40-5162-4c7d-8e8f-9a0b1c2d3e4f";
+      const output = join(e.home, "missing.md");
+      let result = await runAsync(e, ["deep-researcher", "report", "get", other, "--output", output]);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /not found/);
+      assert.match(result.stderr, new RegExp(other));
+      assert.ok(!existsSync(output));
+
+      result = await runAsync(e, ["deep-researcher", "report", "delete", other]);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /not found/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("explains an agent that keeps no reports", async () => {
+    const server = await reportServer((_req, res) => {
+      res.statusCode = 405;
+      res.end();
+    });
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      const result = await runAsync(e, ["deep-researcher", "report", "list"]);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /405/);
+    } finally {
+      await server.close();
+    }
+    const notFound = await reportServer((_req, res) => {
+      res.statusCode = 404;
+      res.end();
+    });
+    try {
+      const e = setup();
+      reportsConfig(e, `${notFound.base}/`);
+      const result = await runAsync(e, ["deep-researcher", "report", "list"]);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /keep(s)? no reports|does not keep reports/);
+    } finally {
+      await notFound.close();
+    }
+  });
+
+  it("asks for a new token on 401 and 403, without showing the token", async () => {
+    for (const status of [401, 403]) {
+      const server = await reportServer((_req, res) => {
+        res.statusCode = status;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "refused" }));
+      });
+      try {
+        const e = setup();
+        reportsConfig(e, `${server.base}/`);
+        const result = await runAsync(e, ["deep-researcher", "report", "get", reportId]);
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, new RegExp(String(status)));
+        assert.match(result.stderr, /token/);
+        assert.ok(!result.stderr.includes(token));
+        assert.equal(result.stdout, "");
+      } finally {
+        await server.close();
+      }
+    }
+  });
+
+  it("does not follow a redirect with the token", async () => {
+    const server = await reportServer((_req, res) => {
+      res.statusCode = 302;
+      res.setHeader("Location", "http://127.0.0.1:9/elsewhere");
+      res.end();
+    });
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      const result = await runAsync(e, ["deep-researcher", "report", "get", reportId]);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /302/);
+      assert.equal(server.seen.length, 1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("exits 3 when the agent cannot be reached", async () => {
+    const server = await reportServer(reportEndpoints);
+    const base = server.base;
+    await server.close();
+    const e = setup();
+    reportsConfig(e, `${base}/`);
+    const result = await runAsync(e, ["deep-researcher", "report", "list"]);
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /reach/);
+    assert.ok(!result.stderr.includes(token));
+  });
+
+  it("refuses wrong report arguments before reading the token or sending anything", async () => {
+    const server = await reportServer(reportEndpoints);
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      for (const args of [
+        ["report"],
+        ["report", "show"],
+        ["report", "get"],
+        ["report", "get", reportId, "--format", "pdf"],
+        ["report", "get", reportId, "--output"],
+        ["report", "get", "../etc/passwd"],
+        ["report", "delete"],
+        ["report", "delete", reportId, "extra"],
+        ["report", "list", "extra"],
+      ]) {
+        const result = await runAsync(e, ["deep-researcher", ...args]);
+        assert.equal(result.status, 2, `${args.join(" ")}: ${result.stderr}`);
+        assert.match(result.stderr, /usage/i);
+      }
+      assert.equal(server.seen.length, 0);
+      assert.ok(!invoked(e));
+    } finally {
+      await server.close();
+    }
   });
 });
