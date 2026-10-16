@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:24.12.0-bookworm-slim AS build
+FROM node:24.21.0-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -10,7 +10,7 @@ COPY pi-package/lib/reply.ts ./pi-package/lib/reply.ts
 RUN npm run build
 
 # The generic host: the A2A adapter as PID 1, and pi, which it starts once per context.
-FROM node:24.12.0-bookworm-slim AS host
+FROM node:24.21.0-bookworm-slim AS host
 ENV NODE_ENV=production
 # What pi's own container recipe installs: a shell and git for its tools, ripgrep for search, CA certificates.
 RUN apt-get update \
