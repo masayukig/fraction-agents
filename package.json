@@ -24,7 +24,7 @@
     "@types/node": "24.19.2",
     "@types/sanitize-html": "2.16.2",
     "mermaid": "12.3.0",
-    "typebox": "1.4.6",
+    "typebox": "1.4.7",
     "typescript": "7.0.2"
   }
 }
