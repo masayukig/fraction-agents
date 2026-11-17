@@ -17,7 +17,7 @@ ENV NODE_ENV=production
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates curl git jq ripgrep \
   && rm -rf /var/lib/apt/lists/*
-RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.5.0 \
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.5.2 \
   && npm cache clean --force
 WORKDIR /app
 COPY package.json package-lock.json ./
