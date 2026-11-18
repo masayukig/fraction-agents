@@ -589,10 +589,12 @@ describe("vuln-responder's github-writer settings", () => {
     "gated",
     "vuln-tracker",
     "fraction-agents",
-    "natsumi",
+    "penelope",
+    "llm-proxy",
+    "release-lag",
   ];
 
-  it("lists the 15 repositories the App is installed on, each on branches starting with vuln-responder/", () => {
+  it("lists the 17 repositories vuln-responder may write to, each on branches starting with vuln-responder/", () => {
     assert.deepEqual(
       config.repositories.map((r) => r.name).sort(),
       [...SOURCES, "llm-wiki", "fleet-infra", "k8s-manifests-fraction"].sort(),

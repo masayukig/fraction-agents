@@ -1,7 +1,7 @@
 # 0028. 脆弱性への対応の係（vuln-responder）: 分析して VEX の注釈を PR で出す
 
 - Date: 2026-10-27
-- Status: Accepted（2026-10-28 に直す PR を有効にした。「直す PR を有効にした」の節）
+- Status: Accepted（2026-10-28 に直す PR を有効にした。「直す PR を有効にした」の節。2026-11-18 に GitHub App のインストール先を All repositories にした。「追記（2026-11-18）」の節）
 
 ## Context
 
@@ -23,6 +23,7 @@
 - この係は CVE の説明や changelog のような信用できない外の文章を読む。書く先の fleet-infra は private で、ブランチ保護が無い。
   そのため GitHub への書き込みは、鍵を持つ sidecar（github-writer、ADR 0027）に代行させる。
 - この係の GitHub App は fleet-infra だけにインストールされている。権限は Contents と Pull requests の write、Metadata の read である。
+  （インストール先は後に All repositories にした。「追記（2026-11-18）」）
 
 調べて分かったことは次のとおりである。
 
@@ -127,6 +128,7 @@
     （App の権限でもワークフローは書けないが、規則でも止める）。
   - fleet-infra: `writablePaths` に、イメージの版を書く場所（`apps/`・`infrastructure/` のうち版上げで触るところ）を足す。
 - GitHub App のインストール先に、それらのリポジトリを足す。本人が GitHub の画面で行う。
+  （2026-11-18 から、インストール先は All repositories で、足す作業は要らない。「追記（2026-11-18）」）
 - `workspace` の worktree は `repositories` の全部に作られる。リポジトリが多くなれば、対象のリポジトリだけに作るよう command を直す。
 - AGENTS.md の「直す PR はまだ出さない」を改め、直す PR の作り方（依存の更新の仕方、テストを走らせられないこと、PR の本文）を書く。
 - 集計役の依頼の `mode` を `fix` にする。
@@ -136,7 +138,7 @@
 上の「直す PR を有効にするとき」に沿って、係の側を次のように変えた。環境の側（overlay の `github-writer.json`、版、
 集計役の `mode`）は別に変える。
 
-- **書ける先**: github-writer の設定の例を、App をインストールした 15 リポジトリにした。
+- **書ける先**: github-writer の設定の例を、App をインストールした 15 リポジトリにした（今の一覧は「追記（2026-11-18）」）。
   - 自作のイメージのソースのリポジトリ 12 個（hshelf・tumblr-like・live・docker-nfs-server・docker-sshd・node-exporter-smartmon・
     natsumi-sshd・cnidaria-cni・gated・vuln-tracker・fraction-agents・natsumi）は `readOnlyPaths: [".github/"]`。
   - llm-wiki は `writablePaths: ["web/"]` と `readOnlyPaths: [".github/"]`。イメージになるのは `web/` だけである。
@@ -199,3 +201,21 @@ AGENTS.md の「5. 注釈を書く」の product の範囲を次のように強�
   その間の依頼は失敗し、理由に「mirror がまだ無い」と出る。
 - 係は text の形に頼る。集計役が text の形を変えたら、AGENTS.md の「依頼の形」を合わせる。
 - 汎用ホストのイメージが jq と curl の分だけ大きくなる。
+
+## 追記（2026-11-18）
+
+GitHub App `fraction-vuln-responder`（App ID 5493557、installation 175776468）のインストール先を、選んだ 15 リポジトリから
+All repositories に変えた。本人が GitHub の画面で行った。
+
+- **理由**: 係が書けるリポジトリは、App のインストール先と github-writer の設定の `repositories` の 2 か所にあり、どちらも手で足していた。
+  リポジトリを増やすたびに 2 か所を直す必要があり、入れ忘れが起きた（penelope・llm-proxy・release-lag が漏れていた）。
+- **書ける先を決めるのは github-writer の設定だけになった**。本番の設定は fleet-infra にある。
+  github-writer の絞り（ブランチの接頭辞 `vuln-responder/`、`writablePaths`・`readOnlyPaths`）は変えない。App に Workflows の権限は無いままである。
+- **引き換え**: App の鍵が漏れたときに書ける範囲が、yuanying の全リポジトリに広がる。鍵は github-writer のコンテナにだけあり、
+  係からは見えない（ADR 0027）。係が prompt injection を受けても、github-writer の設定の外には書けない。これを理由に受け入れた。
+- **入れ忘れの見張り**: 集計役（vuln-tracker）が github-writer の設定を「係が書ける一覧」として読む。本番で動く自作のイメージの
+  ソースのリポジトリが一覧に無い（`not-writable`）か、GitHub でアーカイブ済み（`archived`）なら、メトリクス
+  `vuln_tracker_responder_coverage_gap` を出し、PrometheusRule `VulnTrackerResponderCoverageGap` が鳴る（vuln-tracker の ADR 0016）。
+- **今の一覧**: github-writer の設定の例を本番に揃え、17 リポジトリにした。natsumi はアーカイブしたので外し、
+  penelope・llm-proxy・release-lag を足した（どれも既定は main、`readOnlyPaths: [".github/"]`）。
+- 「直す PR を有効にした」の mirror の容量（115MB）は、2026-10-28 の 15 リポジトリでの値である。今の一覧では測っていない。
