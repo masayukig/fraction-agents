@@ -5,7 +5,7 @@
   "description": "The third-party Pi packages and the browser CLI in the web researcher's image (ADR 0013). Pi supplies their peer dependencies.",
   "dependencies": {
     "@kvidzibo/pi-web-access": "0.3.0",
-    "agent-browser": "0.41.2",
+    "agent-browser": "0.43.0",
     "pi-agent-browser-native": "0.9.16"
   }
 }

@@ -55,17 +55,20 @@ RUN apt-get update \
 WORKDIR /opt/fraction-agents/web-researcher
 COPY images/web-researcher/package.json images/web-researcher/package-lock.json images/web-researcher/.npmrc ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-# agent-browser's install script only picks its native binary; pick the one for this machine ourselves, make it
-# executable (the package ships it without the bit), and drop the other platforms' binaries.
+# Keep install scripts disabled: npm installs the matching optional platform package. This Debian image uses GNU
+# libc. Like the official launcher, place the native binary in agent-browser's own bin/ so its bundled data stays
+# discoverable, and set its execute bit as root before the node user runs it.
 RUN case "$(uname -m)" in \
-      x86_64) binary=agent-browser-linux-x64 ;; \
-      aarch64) binary=agent-browser-linux-arm64 ;; \
+      x86_64) arch=x64 ;; \
+      aarch64) arch=arm64 ;; \
       *) echo "no agent-browser binary for $(uname -m)" >&2; exit 1 ;; \
     esac \
+  && binary="agent-browser-linux-$arch" \
+  && cp "node_modules/@agent-browser/cli-linux-$arch-gnu/bin/agent-browser" "node_modules/agent-browser/bin/$binary" \
   && cd node_modules/agent-browser/bin \
-  && find . -name 'agent-browser-*' ! -name "$binary" -delete \
   && chmod 755 "$binary" \
-  && ln -s "$PWD/$binary" /usr/local/bin/agent-browser
+  && ln -s "$PWD/$binary" /usr/local/bin/agent-browser \
+  && agent-browser --version
 # Chromium's managed policy: no local files (the agent directory holds the login), and no obvious in-cluster names.
 COPY images/web-researcher/chromium-policy.json /etc/chromium/policies/managed/web-researcher.json
 # The browser CLI's and its Pi package's settings, in the node user's home (pi gets HOME from the host).
