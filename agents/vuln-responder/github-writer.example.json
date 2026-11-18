@@ -99,17 +99,31 @@
     },
     {
       "owner": "yuanying",
-      "name": "natsumi",
+      "name": "llm-wiki",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "writablePaths": ["web/"],
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "penelope",
       "defaultBranch": "main",
       "branchPrefix": "vuln-responder/",
       "readOnlyPaths": [".github/"]
     },
     {
       "owner": "yuanying",
-      "name": "llm-wiki",
+      "name": "llm-proxy",
       "defaultBranch": "main",
       "branchPrefix": "vuln-responder/",
-      "writablePaths": ["web/"],
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "release-lag",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
       "readOnlyPaths": [".github/"]
     }
   ],
