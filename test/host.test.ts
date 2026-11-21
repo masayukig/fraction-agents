@@ -485,9 +485,9 @@ describe("files from the caller", () => {
     assert.deepEqual(readFileSync(join(config.workDir, done.contextId, "inbox", "a.pdf")), pdf);
     const part = done.history[0].parts[1];
     assert.deepEqual(
-      { raw: part.raw, filename: part.filename, mediaType: part.mediaType },
-      { raw: undefined, filename: "a.pdf", mediaType: "application/pdf" },
-      "the task keeps the part without its bytes",
+      { raw: part.raw, text: part.text, filename: part.filename },
+      { raw: undefined, text: "[file a.pdf (application/pdf, 307200 bytes), not kept in the task]", filename: "a.pdf" },
+      "the task keeps a text part naming the file, without its bytes",
     );
   });
 

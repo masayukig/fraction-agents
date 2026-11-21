@@ -79,13 +79,22 @@ export function saveToInbox(workDir: string, files: readonly InboundFile[]): str
 }
 
 /**
- * The message without the bytes of its files: the parts stay, with their file names and media types. The task
- * keeps it so, since the files are in the working directory and the task would otherwise be as large as they are.
+ * The message without the bytes of its files. The task keeps it so, since the files are in the working directory
+ * and the task would otherwise be as large as they are. Each file part becomes a text part that names the file:
+ * a part with no content at all is not a valid A2A part, and clients that check (the a2a CLI) fail to read the task.
  */
 export function withoutFileBytes(message: Message): Message {
   return {
     ...message,
-    parts: message.parts.map((part) => (part.content?.$case === "raw" ? { ...part, content: undefined } : part)),
+    parts: message.parts.map((part) =>
+      part.content?.$case === "raw"
+        ? {
+            ...part,
+            content: { $case: "text", value: `[file ${part.filename || "(no name)"} (${part.mediaType || "unknown type"}, ${part.content.value.length} bytes), not kept in the task]` },
+            mediaType: "text/plain",
+          }
+        : part,
+    ),
   };
 }
 
